@@ -75,7 +75,13 @@ LiteLLM's `completion` span — created by LiteLLM's instrumentor, not our code 
 | [baseline/](baseline/) | LangGraph | **Before** — flat spans, no conventions |
 | [langgraph-demo/](langgraph-demo/) | LangGraph | **After** — Baggage grouping + payload traceparent |
 | [cross-library-demo/](cross-library-demo/) | LangChain + LiteLLM | Cross-library span linking — grouping works, causality via payload traceparent |
-| [autogen-demo/](autogen-demo/) | AutoGen v0.4 | Adversarial validation — async event-driven runtime |
+| [autogen-demo/](autogen-demo/) | AutoGen v0.4 | Adversarial validation — Baggage survives async event-driven runtime |
+
+### AutoGen — Baggage Survives Async Dispatch
+
+![Baggage survives AutoGen async dispatch](screenshots/does-baggage-survive-autogen-async-dispatch.png)
+
+AutoGen's internally created `autogen process worker` span carries `gen_ai.group.id=autogen-session-1`, `gen_ai.group.type=agent_collaboration`, and `gen_ai.agent.id=planner-worker-team`. We did not create this span, AutoGen's runtime did. The `BaggageSpanProcessor` copied our Baggage to it automatically, across async message passing between the planner and worker agents. AutoGen knows nothing about these attributes, it just created its autogen process worker span as usual, and our processor attached the grouping data automatically. We proved that baggage-based grouping can survive an async, event-driven agent runtime and be applied to spans created internally by the framework itselfnot only spans created by application code - Note: this does not prove yet that every async framework preserves baggage the same way that causality is fully modeled, only that AutoGen’s built-in hierarchy appears intact in this case
 
 ## Backends
 
