@@ -19,6 +19,14 @@ Same agent as baseline, but with **Grouping** via W3C Baggage and `BaggageSpanPr
 - Same pattern as HTTP `traceparent` headers, applied to LLM message envelopes
 - Works regardless of which library created each span
 
+## Scripts
+
+| Script | What it demonstrates |
+|--------|---------------------|
+| `agent.py` | Grouping only — Baggage `gen_ai.group.id` per round |
+| `agent_multidim.py` | Multi-dimensional grouping — 3 baggage keys simultaneously |
+| `agent_causality.py` | Grouping + causality — Baggage + payload traceparent injection |
+
 ## Run
 
 ```bash
@@ -30,11 +38,13 @@ cd langgraph-demo
 source ../baseline/.venv/bin/activate
 pip install opentelemetry-processor-baggage
 
-# Run
-python agent.py
+# Run each scenario separately
+python agent.py               # grouping only
+python agent_multidim.py       # multi-dimensional grouping
+python agent_causality.py      # grouping + causality
 ```
 
-Check Aspire at http://localhost:18888 — compare with the baseline trace. Spans now carry `gen_ai.group.id` and `gen_ai.group.type` attributes.
+Check Aspire at http://localhost:18888 — each script creates a trace with a distinct service name.
 
 ## Screenshots
 

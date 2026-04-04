@@ -27,11 +27,19 @@ cd cross-library-demo
 source ../baseline/.venv/bin/activate
 pip install langchain litellm openinference-instrumentation-litellm
 
-# Run
-python agent.py
+# Run each scenario separately
+python agent.py                  # grouping only (flat siblings — shows WHY causality is needed)
+python agent_with_causality.py   # grouping + causality (nested spans)
 ```
 
-Check Aspire at http://localhost:18888 — look for `cross-library-demo` traces.
+Check Aspire at http://localhost:18888 — each script creates a trace with a distinct service name.
+
+## Scripts
+
+| Script | What it demonstrates |
+|--------|---------------------|
+| `agent.py` | Grouping works across LangChain + LiteLLM, but spans are flat siblings — shows why payload traceparent is needed |
+| `agent_with_causality.py` | Grouping + causality — LiteLLM's `completion` and `execute_tool` both nested under `chat` |
 
 ## Screenshots
 

@@ -202,7 +202,7 @@ async def main():
 
     await asyncio.sleep(2)
     provider.shutdown()
-    print("[tracing] Spans flushed. Check Aspire at http://localhost:18888")
+    print("[tracing] Spans flushed. Check Aspire at http://localhost:18888 - langgraph-causality-demo")
     print("[tracing] Look for execute_tool spans parented to chat spans (causality)")
 
 
