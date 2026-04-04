@@ -44,7 +44,7 @@ Check Aspire at http://localhost:18888 — compare with the baseline trace. Span
 
 Left: `gen_ai.group.id=round-1` and `gen_ai.group.type=react_iteration` present. Right (baseline): no grouping attributes.
 
-### Multi-dimensional grouping — chat span (before / after)
+<!-- ### Multi-dimensional grouping — chat span (before / after)
 
 ![Multi-dim chat span](../screenshots/multidim-chat-span-before-after.png)
 
@@ -54,7 +54,7 @@ Left: `chat` span carries 4 dimensions — `gen_ai.agent.id=main-agent`, `gen_ai
 
 ![Multi-dim execute_tool span](../screenshots/multidim-execute-tool-before-after.png)
 
-Left: `execute_tool` carries same round and agent, but `gen_ai.phase=execution` (not `reasoning`). Same round, same agent, different phase — multi-dimensional membership proven. Right (baseline): no grouping.
+Left: `execute_tool` carries same round and agent, but `gen_ai.phase=execution` (not `reasoning`). Same round, same agent, different phase — multi-dimensional membership proven. Right (baseline): no grouping. -->
 
 ### Causality — execute_tool parented to chat
 
