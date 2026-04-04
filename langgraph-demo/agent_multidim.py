@@ -5,14 +5,16 @@ Directly addresses the reviewer's nesting concern from issue #3575:
    across multiple dimensions. For example, it may belong to the 'main agent',
    while also being part of the second ReAct iteration."
 
-This demo sets FOUR baggage dimensions simultaneously:
-  - gen_ai.group.id    = round-N       (which ReAct iteration)
-  - gen_ai.group.type  = react_iteration
-  - gen_ai.agent.id    = main-agent    (which agent owns this span)
-  - gen_ai.phase       = reasoning|execution  (what kind of work)
+This demo sets THREE baggage dimensions simultaneously:
+  - gen_ai.group.id    = round-N                   (which ReAct iteration)
+  - gen_ai.group.type  = react_reasoning|react_execution  (what kind of work)
+  - gen_ai.agent.id    = main-agent                (which agent owns this span)
 
-A single span carries ALL four as attributes — proving multi-dimensional
-membership without wrapper spans or arrays.
+Jaeger query examples:
+  gen_ai.group.id=round-1                                → all spans in round 1
+  gen_ai.group.type=react_reasoning                      → all LLM reasoning spans
+  gen_ai.group.id=round-1 gen_ai.group.type=react_execution → tool execution in round 1
+  gen_ai.agent.id=main-agent gen_ai.group.type=react_reasoning → reasoning by main-agent
 """
 
 import asyncio
@@ -125,13 +127,12 @@ async def tool_call(state: AgentState) -> dict:
     round_idx = state["round"]
 
     # ── GROUPING (MULTI-DIMENSIONAL) ──
-    # Same round and agent as the LLM call, but phase = "execution" instead of
-    # "reasoning". A backend can now filter: "show me all execution spans in round-1
-    # for main-agent" — impossible without multi-dimensional grouping.
+    # Same round and agent as the LLM call, but group.type = "react_execution"
+    # instead of "react_reasoning". A backend can now filter:
+    #   gen_ai.group.id=round-1 gen_ai.group.type=react_execution
     ctx = baggage.set_baggage("gen_ai.group.id", f"round-{round_idx}")
-    ctx = baggage.set_baggage("gen_ai.group.type", "react_iteration", ctx)
+    ctx = baggage.set_baggage("gen_ai.group.type", "react_execution", ctx)
     ctx = baggage.set_baggage("gen_ai.agent.id", "main-agent", ctx)
-    ctx = baggage.set_baggage("gen_ai.phase", "execution", ctx)
     token = context.attach(ctx)
 
     try:
@@ -196,9 +197,13 @@ async def main():
 
     await asyncio.sleep(2)
     provider.shutdown()
-    print("[tracing] Spans flushed. Check Aspire at http://localhost:18888")
-    print("[tracing] Look for 4 baggage dimensions on each span:")
-    print("  gen_ai.group.id, gen_ai.group.type, gen_ai.agent.id, gen_ai.phase")
+    print("[tracing] Spans flushed.")
+    print("[tracing] Aspire: http://localhost:18888")
+    print("[tracing] Jaeger: http://localhost:16686")
+    print("[tracing] Try Jaeger tag queries:")
+    print("  gen_ai.group.id=round-1")
+    print("  gen_ai.group.type=react_reasoning")
+    print("  gen_ai.group.id=round-1 gen_ai.group.type=react_execution")
 
 
 if __name__ == "__main__":
