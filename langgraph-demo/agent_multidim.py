@@ -66,17 +66,18 @@ async def llm_call(state: AgentState) -> dict:
     sim = SIMULATED_ROUNDS[round_idx]
 
     # ── GROUPING (MULTI-DIMENSIONAL) ──
-    # Set four baggage dimensions. BaggageSpanProcessor copies ALL of them
-    # to span attributes. This proves a span can belong to:
-    #   - a ReAct round (gen_ai.group.id)
-    #   - a round type (gen_ai.group.type)
-    #   - an agent (gen_ai.agent.id)
-    #   - a phase (gen_ai.phase)
-    # ...all simultaneously, without wrapper spans or arrays.
+    # Set multiple baggage dimensions. BaggageSpanProcessor copies ALL of them
+    # to span attributes. A span belongs to a round, a group type, and an agent
+    # simultaneously — without wrapper spans or arrays.
+    #
+    # Jaeger query examples:
+    #   gen_ai.group.id=round-1                              → all spans in round 1
+    #   gen_ai.group.type=react_reasoning                    → all LLM reasoning spans
+    #   gen_ai.group.id=round-1 gen_ai.group.type=react_reasoning → reasoning in round 1
+    #   gen_ai.agent.id=main-agent                           → all spans from this agent
     ctx = baggage.set_baggage("gen_ai.group.id", f"round-{round_idx + 1}")
-    ctx = baggage.set_baggage("gen_ai.group.type", "react_iteration", ctx)
+    ctx = baggage.set_baggage("gen_ai.group.type", "react_reasoning", ctx)
     ctx = baggage.set_baggage("gen_ai.agent.id", "main-agent", ctx)
-    ctx = baggage.set_baggage("gen_ai.phase", "reasoning", ctx)
     token = context.attach(ctx)
 
     try:
