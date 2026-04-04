@@ -21,6 +21,12 @@ exporters:
       project: "${GALILEO_PROJECT}"
       logstream: "${GALILEO_LOG_STREAM}"
 
+  # Jaeger via OTLP/gRPC (tag-based search for multi-dimensional queries)
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
   # Debug exporter — prints span summaries to collector stdout
   debug:
     verbosity: basic
@@ -35,7 +41,7 @@ service:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp/aspire, otlphttp/galileo, debug]
+      exporters: [otlp/aspire, otlp/jaeger, otlphttp/galileo, debug]
 
   telemetry:
     logs:
