@@ -30,7 +30,7 @@ Spans now carry `gen_ai.group.id=round-1` and `gen_ai.group.type=react_iteration
 
 ![Multi-dim chat span](screenshots/multidim-chat-span-before-after.png)
 
-A single `chat` span belongs to 4 dimensions simultaneously: round, round type, agent, and phase. Directly addresses the reviewer's nesting concern.
+A single `chat` span belongs to 4 dimensions simultaneously: round, round type, agent, and phase.
 
 ![Multi-dim execute_tool span](screenshots/multidim-execute-tool-before-after.png)
 
@@ -64,7 +64,7 @@ LiteLLM's `completion` span — created by LiteLLM's instrumentor, not our code 
 
 ![Cross-library causality execute_tool](screenshots/cross-library-causality-demo-grouping-with-causality-executetool.png)
 
-`execute_tool` is also a child of `chat`, with `gen_ai.group.id=round-1`. The reviewer's "impractical" LangChain + LiteLLM scenario — **proven working.**
+`execute_tool` is also a child of `chat`, with `gen_ai.group.id=round-1`. Cross-library grouping + causality — **working.**
 
 > Note: If you see a `gen_ai.causality` attribute on spans in earlier screenshots, this is a **debug label only** — not a proposed semantic convention. The causality is proven by the parent-child relationship in the trace tree itself.
 
@@ -74,7 +74,7 @@ LiteLLM's `completion` span — created by LiteLLM's instrumentor, not our code 
 |------|-----------|---------|
 | [baseline/](baseline/) | LangGraph | **Before** — flat spans, no conventions |
 | [langgraph-demo/](langgraph-demo/) | LangGraph | **After** — Baggage grouping + payload traceparent |
-| [cross-library-demo/](cross-library-demo/) | LangChain + LiteLLM | Directly answers reviewer's critique — grouping works, causality needs payload traceparent |
+| [cross-library-demo/](cross-library-demo/) | LangChain + LiteLLM | Cross-library span linking — grouping works, causality via payload traceparent |
 | [autogen-demo/](autogen-demo/) | AutoGen v0.4 | Adversarial validation — async event-driven runtime |
 
 ## Backends

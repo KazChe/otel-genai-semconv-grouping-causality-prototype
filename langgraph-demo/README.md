@@ -8,7 +8,7 @@ Same agent as baseline, but with **Grouping** via W3C Baggage and `BaggageSpanPr
 - `BaggageSpanProcessor` (official package) automatically copies baggage to span attributes
 - All spans in a round carry `gen_ai.group.id=round-N` — no wrapper spans needed
 - Multi-dimensional membership works: a span carries both `gen_ai.group.id` and `gen_ai.group.type` simultaneously
-- `agent_multidim.py` proves the reviewer's nesting concern is addressed — a single span belongs to a round, an agent, AND a phase (4 dimensions) simultaneously
+- `agent_multidim.py` demonstrates multi-dimensional nesting — a single span belongs to a round, an agent, AND a phase (4 dimensions) simultaneously
 
 ## What this demo proves about Causality
 

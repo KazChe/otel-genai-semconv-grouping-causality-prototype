@@ -1,16 +1,12 @@
 # Cross-Library Demo — LangChain + LiteLLM
 
-Directly answers the reviewer's critique from issue #3575:
-
-> *"how would I add a link from an `execute_tool` span created by LangChain to an `inference` span created by LiteLLM?"*
-
-Two independent libraries, neither knows about the other's spans. Both instrumented on the same `TracerProvider`.
+Demonstrates grouping and causality across two independent instrumentation libraries — LangChain and LiteLLM — neither of which knows about the other's spans. Both instrumented on the same `TracerProvider`.
 
 ## What this demo proves about Grouping
 
 - Both LangChain's orchestration spans and LiteLLM's inference spans carry `gen_ai.group.id` from Baggage
 - `BaggageSpanProcessor` copies baggage to ALL spans regardless of which library created them
-- The reviewer's "impractical" scenario works — grouping across library boundaries
+- Grouping works across library boundaries without either library needing to know about the convention
 
 ## What this demo proves about Causality
 
@@ -71,4 +67,4 @@ LiteLLM's `completion` span (11.18ms) is nested under `chat` — it carries `gen
 
 ![Cross-library causality execute_tool span](../screenshots/cross-library-causality-demo-grouping-with-causality-executetool.png)
 
-`execute_tool` (102.03ms) is also a child of `chat`, carrying `gen_ai.group.id=round-1`. The causal link was established via payload traceparent injection — the tool executor extracted the chat span's context from the tool call payload. **The reviewer's "impractical" scenario is now working.**
+`execute_tool` (102.03ms) is also a child of `chat`, carrying `gen_ai.group.id=round-1`. The causal link was established via payload traceparent injection — the tool executor extracted the chat span's context from the tool call payload. **Cross-library grouping + causality: working.**
