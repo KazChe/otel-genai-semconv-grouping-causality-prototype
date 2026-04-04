@@ -26,7 +26,7 @@ No `gen_ai.group.id`, no causal links. Backend guesses from timestamps.
 
 Spans now carry `gen_ai.group.id=round-1` and `gen_ai.group.type=react_iteration`.
 
-### After (Aspire) — Multi-dimensional Grouping
+<!-- ### After (Aspire) — Multi-dimensional Grouping
 
 ![Multi-dim chat span](screenshots/multidim-chat-span-before-after.png)
 
@@ -34,7 +34,7 @@ A single `chat` span belongs to 4 dimensions simultaneously: round, round type, 
 
 ![Multi-dim execute_tool span](screenshots/multidim-execute-tool-before-after.png)
 
-`execute_tool` span: same round and agent as `chat`, but `gen_ai.phase=execution` instead of `reasoning`.
+`execute_tool` span: same round and agent as `chat`, but `gen_ai.phase=execution` instead of `reasoning`. -->
 
 ### After (Aspire) — Causality via Payload Traceparent
 

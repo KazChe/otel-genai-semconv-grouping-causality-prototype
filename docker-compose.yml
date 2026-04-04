@@ -16,6 +16,16 @@ services:
       - GALILEO_LOG_STREAM=${GALILEO_LOG_STREAM:-dev}
     depends_on:
       - aspire
+      - jaeger
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: jaeger
+    ports:
+      - "16686:16686"  # Jaeger UI (tag-based search for multi-dimensional queries)
+      - "4317"         # OTLP gRPC (internal, collector connects here)
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
 
   aspire:
     image: mcr.microsoft.com/dotnet/aspire-dashboard:9.0
