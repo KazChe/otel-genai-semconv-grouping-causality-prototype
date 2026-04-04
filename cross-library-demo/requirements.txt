@@ -1,0 +1,9 @@
+langchain>=0.3.0
+langchain-core>=0.3.0
+litellm>=1.50.0
+opentelemetry-api>=1.29.0
+opentelemetry-sdk>=1.29.0
+opentelemetry-exporter-otlp-proto-http>=1.29.0
+opentelemetry-processor-baggage>=0.61b0
+openinference-instrumentation-langchain
+openinference-instrumentation-litellm
