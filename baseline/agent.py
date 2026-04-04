@@ -159,7 +159,7 @@ async def main():
     # Flush spans
     await asyncio.sleep(2)
     provider.shutdown()
-    print("[tracing] Spans flushed. Check Aspire at http://localhost:18888")
+    print("[tracing] Spans flushed. Check Aspire at http://localhost:18888 - baseline-demo")
 
 
 if __name__ == "__main__":
