@@ -35,15 +35,21 @@ I built four demos ([prototype repo](https://github.com/KazChe/otel-genai-semcon
 
 W3C Baggage supports multiple keys simultaneously, so a span can carry `gen_ai.group.id=round-1`, `gen_ai.group.type=react_iteration`, and `gen_ai.agent.id=main-agent` at the same time, each set via `baggage.set_baggage()` and copied to attributes by `BaggageSpanProcessor`. No arrays and no wrapper spans.
 
+See: [`langgraph-demo/agent_multidim.py#L80-L82`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/blob/main/langgraph-demo/agent_multidim.py#L80-L82) sets 3 baggage dimensions per round, and [`langgraph-demo/tracing.py#L36-L39`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/blob/main/langgraph-demo/tracing.py#L36-L39) — `BaggageSpanProcessor` setup.
+
 **Cross-library span linking (LangChain + LiteLLM):**
 
 > "How would I add a link from an execute_tool span created by LangChain to an inference span created by LiteLLM?"
 
 Two findings here:
 
-1. **Grouping works without coordination** Both instrumentors are registered on the same `TracerProvider`. `BaggageSpanProcessor` copies baggage to all spans regardless of which library created them LiteLLM's `completion` span carries `gen_ai.group.id=round-1` even though LiteLLM knows nothing about the convention.
+1. **Grouping works without coordination.** Both instrumentors are registered on the same `TracerProvider`. `BaggageSpanProcessor` copies baggage to all spans regardless of which library created them — LiteLLM's `completion` span carries `gen_ai.group.id=round-1` even though LiteLLM knows nothing about the convention.
+   See: [`cross-library-demo/tracing.py#L45-L50`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/blob/main/cross-library-demo/tracing.py#L45-L50) — both `LangChainInstrumentor` and `LiteLLMInstrumentor` on the same provider.
+   See: [`cross-library-demo/agent.py#L87-L88`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/blob/main/cross-library-demo/agent.py#L87-L88) — baggage set before `litellm.completion()` call.
 
-2. **Causality requires payload-level propagation.** When LiteLLM's `completion` span ends (after `litellm.completion()` returns, its context is no longer active, so in-process context propagation can't link the subsequent `execute_tool` span to it. The fix: inject `traceparent` into the tool call payload while the parent span is still active, and extract it at tool execution time. This is the same pattern HTTP uses for cross-service propagation, applied to LLM tool call envelopes.
+2. **Causality requires payload-level propagation.** When LiteLLM's `completion` span ends (after `litellm.completion()` returns), its context is no longer active, so in-process context propagation can't link the subsequent `execute_tool` span to it. The fix: inject `traceparent` into the tool call payload while the parent span is still active, and extract it at tool execution time. This is the same pattern HTTP uses for cross-service propagation, applied to LLM tool call envelopes.
+   See: [`cross-library-demo/agent_with_causality.py#L93-L96`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/blob/main/cross-library-demo/agent_with_causality.py#L93-L96) — inject traceparent while chat span is active.
+   See: [`cross-library-demo/agent_with_causality.py#L111-L113`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/blob/main/cross-library-demo/agent_with_causality.py#L111-L113) — extract traceparent at tool execution.
 
 ### Addressing @lmolkova's question
 
