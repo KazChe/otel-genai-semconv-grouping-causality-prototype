@@ -9,10 +9,10 @@ This repo demonstrates two proposed primitives for OpenTelemetry GenAI semantic 
 
 ## Before / After
 
-| | Before (baseline) | After (with conventions) |
-|---|---|---|
-| **Grouping** | Flat spans — backend guesses from timestamps | Each span tagged with `gen_ai.group.id=round-N` |
-| **Causality** | Tool spans are siblings of LLM spans | Tool spans parented to the LLM call that triggered them |
+|               | Before (baseline)                            | After (with conventions)                                |
+| ------------- | -------------------------------------------- | ------------------------------------------------------- |
+| **Grouping**  | Flat spans — backend guesses from timestamps | Each span tagged with `gen_ai.group.id=round-N`         |
+| **Causality** | Tool spans are siblings of LLM spans         | Tool spans parented to the LLM call that triggered them |
 
 ### Before (Aspire) — Baseline
 
@@ -70,12 +70,12 @@ LiteLLM's `completion` span — created by LiteLLM's instrumentor, not our code 
 
 ## Demos
 
-| Demo | Framework | Purpose |
-|------|-----------|---------|
-| [baseline/](baseline/) | LangGraph | **Before** — flat spans, no conventions |
-| [langgraph-demo/](langgraph-demo/) | LangGraph | **After** — Baggage grouping + payload traceparent |
+| Demo                                       | Framework           | Purpose                                                                        |
+| ------------------------------------------ | ------------------- | ------------------------------------------------------------------------------ |
+| [baseline/](baseline/)                     | LangGraph           | **Before** — flat spans, no conventions                                        |
+| [langgraph-demo/](langgraph-demo/)         | LangGraph           | **After** — Baggage grouping + payload traceparent                             |
 | [cross-library-demo/](cross-library-demo/) | LangChain + LiteLLM | Cross-library span linking — grouping works, causality via payload traceparent |
-| [autogen-demo/](autogen-demo/) | AutoGen v0.4 | Adversarial validation — Baggage survives async event-driven runtime |
+| [autogen-demo/](autogen-demo/)             | AutoGen v0.4        | Adversarial validation — Baggage survives async event-driven runtime           |
 
 ### AutoGen — Baggage Survives Async Dispatch
 
@@ -85,35 +85,50 @@ AutoGen's internally created `autogen process worker` span carries `gen_ai.group
 
 ## Backends
 
-- **Aspire** (open source) — anyone can reproduce, shows raw span data with attributes
-- **Galileo** (production AI observability) — shows what a backend can build with these conventions
+- **Aspire** (open source) anyone can reproduce, shows raw span data with attributes
+- **Aegis** (open source) for another UX - I felt it has better querying capabilities
+- **Galileo** still work in progress (production AI observability) — will show what an observability backend can build with these conventions
 
 ## Quick Start
 
 ```bash
-# Start infrastructure (Collector + Aspire)
+# Start infrastructure (Collector + Aspire + Jaeger)
 docker compose up -d
 
-# Run baseline (before)
+# Run baseline (before — flat spans, no conventions)
 cd baseline && python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt && python agent.py
+pip install -r requirements.txt
+python agent.py
 
-# Run langgraph demo (after)
-cd ../langgraph-demo && python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt && python agent.py
+# Run langgraph demos (after — grouping + causality)
+cd ../langgraph-demo && source ../baseline/.venv/bin/activate
+pip install opentelemetry-processor-baggage
+python agent.py               # grouping only
+python agent_multidim.py       # multi-dimensional grouping
+python agent_causality.py      # grouping + causality
+
+# Run cross-library demos (LangChain + LiteLLM)
+cd ../cross-library-demo && source ../baseline/.venv/bin/activate
+pip install langchain litellm openinference-instrumentation-litellm
+python agent.py                  # grouping only (shows WHY causality is needed)
+python agent_with_causality.py   # grouping + causality
+
+# Run AutoGen demo (async event-driven validation — requires OPENAI_API_KEY in .env)
+cd ../autogen-demo && python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python agent.py
 ```
 
 Aspire dashboard: http://localhost:18888
 
 ## Generalizability Matrix
 
-| Framework | Baggage (grouping) | Payload traceparent (causality) |
-|-----------|-------------------|-------------------------------|
-| LangGraph / LlamaIndex | Works | Works |
-| AutoGen v0.4 (async) | Works if runtime propagates context | Message envelope is natural carrier |
-| CrewAI | Works (built-in OTel) | Task delegation payload is carrier |
-| DSPy | Needs custom processor | Compile-time structure harder |
-| Cross-language (Python--.NET) | Won't cross boundary | Only viable mechanism |
-| MCP-based tools | Won't cross process | Already HTTP, traceparent native |
+| Framework                     | Baggage (grouping)    | Payload traceparent (causality)     | Status   |
+| ----------------------------- | --------------------- | ----------------------------------- | -------- |
+| LangGraph / LlamaIndex        | Works                 | Works                               | Tested   |
+| AutoGen v0.4 (async)          | Works                 | Message envelope is natural carrier | Tested   |
+| CrewAI                        | Works (built-in OTel) | Task delegation payload is carrier  | Analysis |
+| Cross-language (Python//.NET) | Won't cross boundary  | Only viable mechanism               | Analysis |
+| MCP-based tools               | Won't cross process   | Already HTTP, traceparent native    | Analysis |
 
 > These are not two independent ideas. They are two layers of the same contract. Within a single runtime, use Baggage. At every boundary that crosses async, language, or process lines, use payload traceparent.
