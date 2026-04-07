@@ -7,3 +7,7 @@ opentelemetry-exporter-otlp-proto-http>=1.29.0
 opentelemetry-processor-baggage>=0.61b0
 openinference-instrumentation-langchain
 openinference-instrumentation-litellm
+# test dependencies
+pytest>=7.0.0
+pydantic>=2.0.0
+msgpack>=1.0.0
