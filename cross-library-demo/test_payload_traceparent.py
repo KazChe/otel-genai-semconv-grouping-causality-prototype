@@ -370,7 +370,6 @@ class TestCrossFrameworkEnvelopePatterns:
     serialization tests above — each targets a specific framework's
     actual tool-call envelope behavior."""
 
-    @pytest.mark.skip(reason="stub — implementation pending")
     def test_string_wrapped_arguments_autogen(self, tracing):
         """AutoGen v0.4 carries FunctionCall.arguments as a JSON *string*,
         not a dict. The carrier must survive being nested inside a
@@ -378,9 +377,29 @@ class TestCrossFrameworkEnvelopePatterns:
         field at tool execution time. This is subtly different from
         dict-level JSON round-trips because the carrier is double-encoded:
         once as part of the arguments string, once as the outer message."""
-        pass
+        tracer, exporter = tracing
+        carrier, parent_ctx = _inject_carrier_in_active_span(tracer)
 
-    @pytest.mark.skip(reason="stub — implementation pending")
+        # Model AutoGen's FunctionCall envelope:
+        # arguments is a JSON *string*, not a dict
+        tool_args = {"query": "HNSW", "_otel": carrier}
+        function_call = {
+            "id": "call_abc123",
+            "name": "web_search",
+            "arguments": json.dumps(tool_args),  # string, not dict
+        }
+
+        # Simulate the full envelope going through JSON (message serialization)
+        serialized = json.dumps(function_call)
+        restored = json.loads(serialized)
+
+        # Tool executor: parse the arguments string back to dict
+        parsed_args = json.loads(restored["arguments"])
+        recovered = parsed_args["_otel"]
+
+        _extract_and_create_child(tracer, recovered)
+        _assert_parent_child(exporter, parent_ctx)
+
     def test_json_schema_additional_properties_false_haystack(self, tracing):
         """Haystack strict mode sets additionalProperties: false on the
         tool's JSON Schema sent to the LLM provider. This means extras
@@ -388,22 +407,106 @@ class TestCrossFrameworkEnvelopePatterns:
         sees them), unlike Pydantic extra='forbid' which rejects at
         model instantiation. Tests that carrier injection into the
         function parameters is blocked by JSON Schema validation."""
-        pass
+        tracer, _ = tracing
+        carrier, _ = _inject_carrier_in_active_span(tracer)
 
-    @pytest.mark.skip(reason="stub — implementation pending")
+        # Model Haystack's strict mode JSON Schema
+        tool_schema = {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        }
+
+        # Tool call payload with carrier injected as extra property
+        tool_args = {"query": "HNSW", "_otel": carrier}
+
+        # Simulate JSON Schema validation (additionalProperties: false)
+        allowed_keys = set(tool_schema["properties"].keys())
+        extra_keys = set(tool_args.keys()) - allowed_keys
+        schema_valid = len(extra_keys) == 0
+
+        assert not schema_valid, (
+            "Payload with _otel should be rejected by strict JSON Schema"
+        )
+        assert "_otel" in extra_keys, (
+            "Carrier key should be flagged as an extra property"
+        )
+
+        # Carrier is rejected at the provider boundary —
+        # this is a hard reject, not a silent strip
+        # The framework never even receives the carrier
+
     def test_non_dict_coercion_to_empty_llamaindex(self, tracing):
         """LlamaIndex's ToolSelection validator coerces non-dict arguments
         to {} silently. This is a silent strip variant where malformed
         args (e.g., a raw string instead of a dict) cause the entire
         payload — including any embedded carrier — to be replaced with
         an empty dict. Tests that causality is lost in this scenario."""
-        pass
+        tracer, _ = tracing
+        carrier, parent_ctx = _inject_carrier_in_active_span(tracer)
 
-    @pytest.mark.skip(reason="stub — implementation pending")
+        # Model LlamaIndex's ToolSelection validator behavior:
+        # if tool_kwargs is not a dict, coerce to {}
+        def coerce_tool_kwargs(kwargs):
+            """Mimics LlamaIndex ToolSelection validator."""
+            return kwargs if isinstance(kwargs, dict) else {}
+
+        # Case 1: carrier embedded in a valid dict — survives
+        valid_args = {"query": "HNSW", "_otel": carrier}
+        result = coerce_tool_kwargs(valid_args)
+        assert "_otel" in result, "Carrier should survive in valid dict args"
+
+        # Case 2: carrier as a raw JSON string (malformed args) — lost
+        malformed_args = json.dumps({"query": "HNSW", "_otel": carrier})
+        result = coerce_tool_kwargs(malformed_args)
+        assert result == {}, "Malformed args should be coerced to empty dict"
+        assert "_otel" not in result, "Carrier lost in non-dict coercion"
+
+        # Causality is lost — extract from empty dict gives no parent
+        extracted_ctx = extract({})
+        token = context.attach(extracted_ctx)
+        try:
+            with tracer.start_as_current_span("execute_tool") as span:
+                span.set_attribute("gen_ai.operation.name", "execute_tool")
+                assert span.parent is None or (
+                    span.parent.span_id != parent_ctx.span_id
+                ), "Carrier was coerced away but causality survived — unexpected"
+        finally:
+            context.detach(token)
+
     def test_native_metadata_slot_semantic_kernel(self, tracing):
         """Semantic Kernel provides KernelContent.Metadata as a built-in
         extension channel for function result metadata. This validates
         that our 'Sidecar Metadata' pattern maps directly to a real
         framework's native metadata slot — carrier placed in Metadata
         survives the function-call round-trip."""
-        pass
+        tracer, exporter = tracing
+        carrier, parent_ctx = _inject_carrier_in_active_span(tracer)
+
+        # Model Semantic Kernel's KernelContent envelope:
+        # result field is strict (core schema), metadata dict is the
+        # built-in extension point for additional context
+        kernel_content = {
+            "function_name": "web_search",
+            "result": "HNSW is a graph-based ANN algorithm.",
+            "metadata": {
+                "execution_time_ms": 42,
+                "_otel": carrier,  # carrier rides in native metadata slot
+            },
+        }
+
+        # Simulate full round-trip: serialize -> persist -> deserialize
+        serialized = json.dumps(kernel_content)
+        restored = json.loads(serialized)
+
+        # Strict validation on core fields only — metadata passes through
+        assert "function_name" in restored
+        assert "result" in restored
+
+        # Carrier survives via the native metadata slot
+        recovered = restored["metadata"]["_otel"]
+        _extract_and_create_child(tracer, recovered)
+        _assert_parent_child(exporter, parent_ctx)
