@@ -510,3 +510,121 @@ class TestCrossFrameworkEnvelopePatterns:
         recovered = restored["metadata"]["_otel"]
         _extract_and_create_child(tracer, recovered)
         _assert_parent_child(exporter, parent_ctx)
+
+    def test_google_adk_tool_call_envelope(self, tracing):
+        """Google Agent Development Kit (ADK) tool call envelope pattern.
+        Google's ecosystem tends toward strict, Protobuf-heritage schemas.
+        ADK tool calls use a dict-based arguments structure derived from
+        the function's type hints. Models the strict validation path where
+        only declared parameters are accepted, and the sidecar mitigation
+        via a separate metadata/context field."""
+        tracer, exporter = tracing
+        carrier, parent_ctx = _inject_carrier_in_active_span(tracer)
+
+        # Model ADK's tool call structure — Protobuf-heritage means
+        # strict schemas by default. Function parameters are validated
+        # against the tool's declared schema.
+        declared_params = {"query": str}  # tool's declared parameters
+
+        # Tool call arguments from LLM response
+        tool_args = {"query": "HNSW", "_otel": carrier}
+
+        # ADK-style strict validation: only declared params accepted
+        validated = {k: v for k, v in tool_args.items() if k in declared_params}
+        assert "_otel" not in validated, (
+            "Carrier should be rejected by strict Protobuf-heritage schema"
+        )
+
+        # Mitigation: ADK provides a tool context/metadata mechanism
+        # for passing auxiliary data alongside tool calls
+        adk_envelope = {
+            "tool_call": validated,
+            "context": {"_otel": carrier},  # ADK context sidecar
+        }
+
+        serialized = json.loads(json.dumps(adk_envelope))
+        recovered = serialized["context"]["_otel"]
+
+        _extract_and_create_child(tracer, recovered)
+        _assert_parent_child(exporter, parent_ctx)
+
+    def test_temporal_payload_converter_pipeline(self, tracing):
+        """Temporal workflows serialize tool/activity arguments through
+        a payload converter pipeline (data converters, codec chains)
+        that is distinct from simple JSON round-trips. Arguments go
+        through PayloadConverter -> PayloadCodec -> wire format when
+        crossing workflow-to-activity boundaries. This tests whether
+        the carrier survives Temporal's multi-stage serialization
+        pipeline, which may apply encoding, compression, or encryption
+        between stages."""
+        import base64
+
+        tracer, exporter = tracing
+        carrier, parent_ctx = _inject_carrier_in_active_span(tracer)
+
+        # Model Temporal's payload converter pipeline:
+        # Stage 1: PayloadConverter — serialize to JSON bytes
+        activity_args = {"query": "HNSW", "_otel": carrier}
+        json_bytes = json.dumps(activity_args).encode("utf-8")
+
+        # Stage 2: PayloadCodec — encode (e.g., base64 for transport)
+        # Temporal codecs can apply compression, encryption, etc.
+        encoded = base64.b64encode(json_bytes)
+
+        # Stage 3: Wire format — Temporal wraps in Payload proto
+        temporal_payload = {
+            "metadata": {"encoding": "anNvbi9wbGFpbg=="},  # "json/plain"
+            "data": encoded.decode("ascii"),
+        }
+
+        # Simulate full wire round-trip
+        wire = json.dumps(temporal_payload)
+        restored_payload = json.loads(wire)
+
+        # Receiver side: reverse the pipeline
+        decoded = base64.b64decode(restored_payload["data"])
+        restored_args = json.loads(decoded)
+
+        recovered = restored_args["_otel"]
+        _extract_and_create_child(tracer, recovered)
+        _assert_parent_child(exporter, parent_ctx)
+
+    def test_pydantic_ai_tool_call_envelope(self, tracing):
+        """PydanticAI is the foundation layer that other frameworks
+        like Marvin delegate to for typed tool execution. Tools are
+        Python functions with typed parameters validated by Pydantic.
+        PydanticAI validates tool arguments against a function's type
+        hints using Pydantic models. Extra fields in the arguments are
+        rejected because tool parameters are strictly typed! tests both
+        the strict rejection path and the RunContext sidecar mitigation."""
+        pytest.importorskip("pydantic")
+        from pydantic import BaseModel, ConfigDict, ValidationError
+
+        #Model PydanticAI's tool parameter validation:
+        #Tool function parameters become a strict Pydantic model
+        class SearchToolParams(BaseModel):
+            model_config = ConfigDict(extra="forbid")
+            query: str
+
+        tracer, exporter = tracing
+        carrier, parent_ctx = _inject_carrier_in_active_span(tracer)
+
+        # Direct injection into tool params fails — strict typed params
+        with pytest.raises(ValidationError):
+            SearchToolParams(query="HNSW", _otel=carrier)
+
+        # Mitigation: PydanticAI provides RunContext as a sidecar
+        # for dependency injection and auxiliary data alongside tool calls
+        class RunContext(BaseModel):
+            model_config = ConfigDict(extra="allow")
+            deps: dict = {}
+
+        run_ctx = RunContext(deps={}, _otel=carrier)
+
+        # RunContext round-trip
+        data = run_ctx.model_dump()
+        restored = RunContext(**data)
+        recovered = restored._otel  # type: ignore[attr-defined]
+
+        _extract_and_create_child(tracer, recovered)
+        _assert_parent_child(exporter, parent_ctx)
