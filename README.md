@@ -1,5 +1,7 @@
 # OTel GenAI Semantic Conventions — Grouping & Causality Prototype
 
+> **Note:** This README reflects the original prototype state. The proposal is being significantly expanded based on reviewer feedback, cross-framework integration testing (6 frameworks verified: AutoGen, Haystack, PydanticAI, LlamaIndex, CrewAI, Google ADK), and evolution of the attribute model from single-key to namespaced baggage keys. This proposal is being split into two separate issues — one for grouping attributes and one for causal span linking. A full README update is in progress.
+
 Prototype for [open-telemetry/semantic-conventions#3575](https://github.com/open-telemetry/semantic-conventions/issues/3575).
 
 This repo demonstrates two proposed primitives for OpenTelemetry GenAI semantic conventions:
