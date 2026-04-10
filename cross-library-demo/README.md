@@ -1,5 +1,7 @@
 # Cross-Library Demo — LangChain + LiteLLM
 
+> **Note:** This README reflects the original demo state. The demos and screenshots remain valid, they prove the core concepts. However, integration testing across 6 frameworks has since shown that injecting the carrier into tool call arguments (`tool_call["_otel"]`) fails in 5/6 frameworks (silent strip or hard reject). The recommended approach is now sidecar propagation via framework-native extension points. This directory also now contains `test_payload_traceparent.py` — 20 automated tests mapping the carrier compatibility matrix across serialization paths and framework envelope patterns. See `ISSUE_CAUSALITY.md` in the repo root for the updated proposal.
+
 Demonstrates grouping and causality across two independent instrumentation libraries — LangChain and LiteLLM — neither of which knows about the other's spans. Both instrumented on the same `TracerProvider`.
 
 ## What this demo proves about Grouping
@@ -36,10 +38,10 @@ Check Aspire at http://localhost:18888 — each script creates a trace with a di
 
 ## Scripts
 
-| Script | What it demonstrates |
-|--------|---------------------|
-| `agent.py` | Grouping works across LangChain + LiteLLM, but spans are flat siblings — shows why payload traceparent is needed |
-| `agent_with_causality.py` | Grouping + causality — LiteLLM's `completion` and `execute_tool` both nested under `chat` |
+| Script                    | What it demonstrates                                                                                             |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `agent.py`                | Grouping works across LangChain + LiteLLM, but spans are flat siblings — shows why payload traceparent is needed |
+| `agent_with_causality.py` | Grouping + causality — LiteLLM's `completion` and `execute_tool` both nested under `chat`                        |
 
 ## Screenshots
 

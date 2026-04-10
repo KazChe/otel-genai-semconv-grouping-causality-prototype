@@ -4,9 +4,19 @@ Concern: "You can't always assume that you can access the tool-call payload
 and inject additional information into it. Parsing and copying may occur,
 so the context you inject into payload could be lost."
 
+NOTE: These are simulated tests that model framework envelope shapes
+without importing the actual frameworks. Framework-specific tests
+(TestCrossFrameworkEnvelopePatterns) have been verified against real
+framework imports in frameworks/<name>/test_envelope_shape.py — each
+simulated test's docstring references the integration tests that
+confirmed or corrected its assumptions. Key correction: injecting the
+carrier into tool call arguments fails in 5/6 frameworks tested.
+The recommended approach is sidecar propagation via framework-native
+extension points. See ISSUE_CAUSALITY.md for the updated proposal.
+
 This test suite maps the compatibility matrix for payload-level traceparent
 injection across the transformation scenarios that occur between LLM
-response and tool execution in frameworks like LangGraph and LangChain.
+response and tool execution.
 
 Three integration states are documented:
 
@@ -28,7 +38,7 @@ Two mitigation patterns are tested for the failure cases:
     - Sidecar Metadata: place carrier in a permitted 'metadata' field
     - Out-of-Band Correlation: store carrier externally keyed by correlation ID
 
-Tests use InMemorySpanExporter for programmatic assertions, no Docker needed
+Tests use InMemorySpanExporter for programmatic assertions, no Docker needed.
 """
 
 import copy
@@ -371,44 +381,91 @@ class TestCrossFrameworkEnvelopePatterns:
     actual tool-call envelope behavior."""
 
     def test_string_wrapped_arguments_autogen(self, tracing):
-        """AutoGen v0.4 carries FunctionCall.arguments as a JSON *string*,
-        not a dict. The carrier must survive being nested inside a
-        json.dumps'd string field, then recovered via json.loads on that
-        field at tool execution time. This is subtly different from
-        dict-level JSON round-trips because the carrier is double-encoded:
-        once as part of the arguments string, once as the outer message."""
+        """AutoGen v0.4 FunctionCall envelope — two-layer behavior.
+
+        DISCOVERY (from integration tests): FunctionCall is a dataclass
+        (not Pydantic), and arguments can be either a JSON string or a
+        dict. The carrier survives at the envelope level — but all tool
+        execution paths (run, run_json, call_tool) pass arguments through
+        model_validate() on a Pydantic model with extra='ignore', which
+        SILENTLY STRIPS the carrier. The schema's additionalProperties:
+        false is only a hint for the LLM provider, not enforced at runtime.
+
+        Layer 1 (envelope): carrier survives in arguments string/dict.
+        Layer 2 (tool execution): carrier silently stripped by model_validate().
+        Classification: SILENT STRIP at tool execution level.
+
+        Verified by: frameworks/autogen/test_envelope_shape.py
+          - test_function_call_is_dataclass_not_pydantic
+          - test_run_json_silently_strips_extra_fields
+          - test_run_typed_silently_ignores_extra_fields
+          - test_workbench_call_tool_silently_strips"""
         tracer, exporter = tracing
         carrier, parent_ctx = _inject_carrier_in_active_span(tracer)
 
-        # Model AutoGen's FunctionCall envelope:
-        # arguments is a JSON *string*, not a dict
+        # Layer 1: FunctionCall envelope (dataclass, not Pydantic)
+        # arguments can be string OR dict — both preserve the carrier
         tool_args = {"query": "HNSW", "_otel": carrier}
-        function_call = {
+
+        # Path A: arguments as JSON string (the documented format)
+        function_call_str = {
             "id": "call_abc123",
             "name": "web_search",
-            "arguments": json.dumps(tool_args),  # string, not dict
+            "arguments": json.dumps(tool_args),
         }
 
-        # Simulate the full envelope going through JSON (message serialization)
-        serialized = json.dumps(function_call)
+        serialized = json.dumps(function_call_str)
         restored = json.loads(serialized)
-
-        # Tool executor: parse the arguments string back to dict
         parsed_args = json.loads(restored["arguments"])
-        recovered = parsed_args["_otel"]
+        assert "_otel" in parsed_args, "Carrier should survive in string arguments"
 
+        recovered = parsed_args["_otel"]
         _extract_and_create_child(tracer, recovered)
         _assert_parent_child(exporter, parent_ctx)
+
+        # Path B: arguments as dict (also accepted by FunctionCall)
+        function_call_dict = {
+            "id": "call_abc456",
+            "name": "web_search",
+            "arguments": tool_args,  # dict, not string
+        }
+
+        serialized_dict = json.dumps(function_call_dict)
+        restored_dict = json.loads(serialized_dict)
+        assert "_otel" in restored_dict["arguments"], (
+            "Carrier should survive in dict arguments"
+        )
+
+        # Layer 2: Tool execution silently strips extras
+        # model_validate() with empty model_config (extra='ignore')
+        # discards _otel without error. Simulated here:
+        declared_params = {"query"}
+        validated = {k: v for k, v in parsed_args.items() if k in declared_params}
+        assert "_otel" not in validated, (
+            "Carrier should be stripped at tool execution (silent strip)"
+        )
 
     def test_json_schema_additional_properties_false_haystack(self, tracing):
         """Haystack strict mode sets additionalProperties: false on the
         tool's JSON Schema sent to the LLM provider. This means extras
         are rejected at the provider boundary (before the framework even
         sees them), unlike Pydantic extra='forbid' which rejects at
-        model instantiation. Tests that carrier injection into the
-        function parameters is blocked by JSON Schema validation."""
-        tracer, _ = tracing
-        carrier, _ = _inject_carrier_in_active_span(tracer)
+        model instantiation.
+
+        DISCOVERY (from integration tests): Haystack's ToolCall is a
+        dataclass with a built-in 'extra' field (dict) — a native sidecar
+        slot for carrier injection. Even when tools_strict=True rejects
+        extras in arguments at the provider boundary, the carrier can
+        ride in ToolCall.extra instead. This is the best native fit found
+        across all frameworks tested.
+
+        Verified by: frameworks/haystack/test_envelope_shape.py
+          - test_toolcall_is_dataclass_not_pydantic
+          - test_toolcall_extra_field_as_sidecar
+          - test_tool_invoke_rejects_extras_in_arguments
+          - test_tools_strict_schema_additional_properties"""
+        tracer, exporter = tracing
+        carrier, parent_ctx = _inject_carrier_in_active_span(tracer)
 
         # Model Haystack's strict mode JSON Schema
         tool_schema = {
@@ -420,31 +477,47 @@ class TestCrossFrameworkEnvelopePatterns:
             "additionalProperties": False,
         }
 
-        # Tool call payload with carrier injected as extra property
+        # Tool call arguments with carrier — rejected by strict schema
         tool_args = {"query": "HNSW", "_otel": carrier}
-
-        # Simulate JSON Schema validation (additionalProperties: false)
         allowed_keys = set(tool_schema["properties"].keys())
         extra_keys = set(tool_args.keys()) - allowed_keys
-        schema_valid = len(extra_keys) == 0
-
-        assert not schema_valid, (
-            "Payload with _otel should be rejected by strict JSON Schema"
-        )
         assert "_otel" in extra_keys, (
-            "Carrier key should be flagged as an extra property"
+            "Carrier key should be flagged as extra by strict schema"
         )
 
-        # Carrier is rejected at the provider boundary —
-        # this is a hard reject, not a silent strip
-        # The framework never even receives the carrier
+        # Mitigation: use ToolCall.extra sidecar instead of arguments
+        # (discovered via integration tests — ToolCall has a native extra field)
+        tool_call_envelope = {
+            "tool_name": "web_search",
+            "arguments": {"query": "HNSW"},  # strict — no extras
+            "extra": {"_otel": carrier},       # native sidecar
+        }
+
+        serialized = json.dumps(tool_call_envelope)
+        restored = json.loads(serialized)
+        recovered = restored["extra"]["_otel"]
+
+        _extract_and_create_child(tracer, recovered)
+        _assert_parent_child(exporter, parent_ctx)
 
     def test_non_dict_coercion_to_empty_llamaindex(self, tracing):
-        """LlamaIndex's ToolSelection validator coerces non-dict arguments
-        to {} silently. This is a silent strip variant where malformed
-        args (e.g., a raw string instead of a dict) cause the entire
-        payload — including any embedded carrier — to be replaced with
-        an empty dict. Tests that causality is lost in this scenario."""
+        """LlamaIndex's ToolSelection coerces non-dict tool_kwargs to {}.
+
+        CONFIRMED by integration tests: ToolSelection is a Pydantic
+        BaseModel with a field_validator('tool_kwargs', mode='wrap')
+        called ignore_non_dict_arguments that catches ValidationError
+        and returns {}. This is a silent strip for malformed args.
+
+        Also confirmed: extras in valid dict tool_kwargs DO survive at
+        the envelope level, but are rejected at function call by Python's
+        function signature (TypeError). Two-layer behavior like AutoGen,
+        but rejection is TypeError (hard) not silent strip.
+
+        Verified by: frameworks/llamaindex/test_envelope_shape.py
+          - test_tool_selection_object_type
+          - test_tool_kwargs_non_dict_coercion
+          - test_tool_kwargs_extras_survive
+          - test_function_tool_call_with_extras"""
         tracer, _ = tracing
         carrier, parent_ctx = _inject_carrier_in_active_span(tracer)
 
@@ -482,7 +555,10 @@ class TestCrossFrameworkEnvelopePatterns:
         extension channel for function result metadata. This validates
         that our 'Sidecar Metadata' pattern maps directly to a real
         framework's native metadata slot — carrier placed in Metadata
-        survives the function-call round-trip."""
+        survives the function-call round-trip.
+
+        NOT YET VERIFIED by integration tests — based on research only.
+        TODO: add frameworks/semantic-kernel/ integration tests."""
         tracer, exporter = tracing
         carrier, parent_ctx = _inject_carrier_in_active_span(tracer)
 
@@ -512,38 +588,54 @@ class TestCrossFrameworkEnvelopePatterns:
         _assert_parent_child(exporter, parent_ctx)
 
     def test_google_adk_tool_call_envelope(self, tracing):
-        """Google Agent Development Kit (ADK) tool call envelope pattern.
-        Google's ecosystem tends toward strict, Protobuf-heritage schemas.
-        ADK tool calls use a dict-based arguments structure derived from
-        the function's type hints. Models the strict validation path where
-        only declared parameters are accepted, and the sidecar mitigation
-        via a separate metadata/context field."""
+        """Google ADK tool call — SILENT STRIP via valid_params filter.
+
+        DISCOVERY (from integration tests): FunctionTool is a plain
+        Python class (not Pydantic, not dataclass). run_async() takes
+        args as a dict and explicitly filters to declared params:
+          args_to_call = {k: v for k,v in args.items() if k in valid_params}
+        This is silent strip — same family as AutoGen and CrewAI.
+
+        ToolContext is a rich sidecar (state, session, artifacts, memory)
+        injected automatically if the function declares a tool_context param.
+
+        Verified by: frameworks/google-adk/test_envelope_shape.py
+          - test_tool_object_type
+          - test_tool_run_with_extras
+          - test_tool_context_or_metadata_field
+        Classification: SILENT STRIP on args, ToolContext as sidecar."""
         tracer, exporter = tracing
         carrier, parent_ctx = _inject_carrier_in_active_span(tracer)
 
-        # Model ADK's tool call structure — Protobuf-heritage means
-        # strict schemas by default. Function parameters are validated
-        # against the tool's declared schema.
-        declared_params = {"query": str}  # tool's declared parameters
+        # Model ADK's run_async() filtering — NOT Protobuf strict reject,
+        # but a Python-level filter to declared params:
+        #   args_to_call = {k: v for k, v in args.items() if k in valid_params}
+        import inspect
 
-        # Tool call arguments from LLM response
+        def search(query: str) -> str:
+            return f"Results for {query}"
+
+        valid_params = set(inspect.signature(search).parameters.keys())
         tool_args = {"query": "HNSW", "_otel": carrier}
 
-        # ADK-style strict validation: only declared params accepted
-        validated = {k: v for k, v in tool_args.items() if k in declared_params}
-        assert "_otel" not in validated, (
-            "Carrier should be rejected by strict Protobuf-heritage schema"
+        # ADK's exact filtering logic
+        filtered = {k: v for k, v in tool_args.items() if k in valid_params}
+        assert "_otel" not in filtered, (
+            "Carrier should be silently stripped by valid_params filter"
         )
+        assert "query" in filtered
 
-        # Mitigation: ADK provides a tool context/metadata mechanism
-        # for passing auxiliary data alongside tool calls
+        # Mitigation: ToolContext sidecar — ADK injects ToolContext
+        # if the function declares a tool_context parameter.
+        # Model ToolContext.state as the carrier slot.
+        tool_context_state = {"_otel": carrier, "session_id": "abc"}
         adk_envelope = {
-            "tool_call": validated,
-            "context": {"_otel": carrier},  # ADK context sidecar
+            "args": filtered,
+            "tool_context": {"state": tool_context_state},
         }
 
         serialized = json.loads(json.dumps(adk_envelope))
-        recovered = serialized["context"]["_otel"]
+        recovered = serialized["tool_context"]["state"]["_otel"]
 
         _extract_and_create_child(tracer, recovered)
         _assert_parent_child(exporter, parent_ctx)
@@ -556,7 +648,10 @@ class TestCrossFrameworkEnvelopePatterns:
         crossing workflow-to-activity boundaries. This tests whether
         the carrier survives Temporal's multi-stage serialization
         pipeline, which may apply encoding, compression, or encryption
-        between stages."""
+        between stages.
+
+        NOT YET VERIFIED by integration tests — based on research only.
+        TODO: add frameworks/temporal/ integration tests."""
         import base64
 
         tracer, exporter = tracing
@@ -590,18 +685,30 @@ class TestCrossFrameworkEnvelopePatterns:
         _assert_parent_child(exporter, parent_ctx)
 
     def test_pydantic_ai_tool_call_envelope(self, tracing):
-        """PydanticAI is the foundation layer that other frameworks
-        like Marvin delegate to for typed tool execution. Tools are
-        Python functions with typed parameters validated by Pydantic.
-        PydanticAI validates tool arguments against a function's type
-        hints using Pydantic models. Extra fields in the arguments are
-        rejected because tool parameters are strictly typed! tests both
-        the strict rejection path and the RunContext sidecar mitigation."""
+        """PydanticAI tool parameter validation — TRUE HARD REJECT.
+
+        DISCOVERY (from integration tests): PydanticAI uses
+        PluggableSchemaValidator which enforces additionalProperties: false
+        at RUNTIME — unlike AutoGen which silently strips extras with
+        empty model_config (extra='ignore'). Same schema declaration,
+        opposite runtime behavior.
+
+        Classification: HARD REJECT for tool params, VIABLE via RunContext
+        sidecar. Note: @agent.tool (with RunContext) required — @agent.tool_plain
+        has no sidecar access.
+
+        Also confirmed: baggage PROPAGATES into PydanticAI tool functions
+        automatically — no manual context propagation needed.
+
+        Verified by: frameworks/pydantic-ai/test_envelope_shape.py
+          - test_tool_rejects_extra_parameters_hard
+          - test_run_context_as_sidecar
+          - test_tool_manager_validate_args_rejects_extras"""
         pytest.importorskip("pydantic")
         from pydantic import BaseModel, ConfigDict, ValidationError
 
-        #Model PydanticAI's tool parameter validation:
-        #Tool function parameters become a strict Pydantic model
+        # Model PydanticAI's actual validation behavior:
+        # PluggableSchemaValidator with extra_forbidden
         class SearchToolParams(BaseModel):
             model_config = ConfigDict(extra="forbid")
             query: str
@@ -609,12 +716,12 @@ class TestCrossFrameworkEnvelopePatterns:
         tracer, exporter = tracing
         carrier, parent_ctx = _inject_carrier_in_active_span(tracer)
 
-        # Direct injection into tool params fails — strict typed params
+        # Direct injection into tool params — HARD REJECT (extra_forbidden)
         with pytest.raises(ValidationError):
             SearchToolParams(query="HNSW", _otel=carrier)
 
-        # Mitigation: PydanticAI provides RunContext as a sidecar
-        # for dependency injection and auxiliary data alongside tool calls
+        # Mitigation: PydanticAI's RunContext carries deps as sidecar
+        # Requires @agent.tool (not @agent.tool_plain)
         class RunContext(BaseModel):
             model_config = ConfigDict(extra="allow")
             deps: dict = {}
@@ -628,3 +735,46 @@ class TestCrossFrameworkEnvelopePatterns:
 
         _extract_and_create_child(tracer, recovered)
         _assert_parent_child(exporter, parent_ctx)
+
+    def test_crewai_run_silently_strips_before_run(self, tracing):
+        """CrewAI's run() accepts extras via flexible *args/**kwargs
+        signature, but silently strips them before reaching _run().
+        This is the most deceptive behavior found — no error at any
+        layer, but the carrier vanishes between run() and _run().
+
+        args_schema also silently strips extras (empty model_config,
+        extra='ignore' — same as AutoGen).
+
+        Verified by: frameworks/crewai/test_envelope_shape.py
+          - test_tool_run_with_extras
+          - test_tool_run_with_kwargs_function
+          - test_tool_with_args_schema_extras
+        Classification: SILENT STRIP (deceptive — run() accepts, _run() never sees)"""
+        tracer, _ = tracing
+        carrier, _ = _inject_carrier_in_active_span(tracer)
+
+        # Model CrewAI's run() -> _run() filtering behavior
+        # run() accepts anything via *args, **kwargs
+        run_kwargs = {"query": "HNSW", "_otel": carrier}
+
+        # CrewAI's internal filtering strips extras before _run()
+        # Only declared parameters pass through
+        declared_params = {"query"}
+        filtered_for_run = {k: v for k, v in run_kwargs.items() if k in declared_params}
+
+        assert "_otel" not in filtered_for_run, (
+            "Carrier should be stripped between run() and _run()"
+        )
+        assert "query" in filtered_for_run, "Declared params should survive"
+
+        # args_schema also silently strips (empty model_config)
+        # Same as AutoGen — extra="ignore" by default
+        from pydantic import BaseModel
+
+        class CrewAIArgsSchema(BaseModel):
+            query: str
+            # empty model_config — defaults to extra="ignore"
+
+        validated = CrewAIArgsSchema(query="HNSW", _otel=carrier)
+        assert not hasattr(validated, "_otel"), "args_schema silently drops extras"
+        assert validated.query == "HNSW"
