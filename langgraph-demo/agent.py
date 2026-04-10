@@ -1,4 +1,9 @@
-"""LangGraph ReAct agent WITH Baggage grouping — the 'after' state.
+"""NOTE: This is an early prototype kept for historical reference and demo
+screenshots. It uses the original single-key model (gen_ai.group.id).
+See agent_overlapping_groups.py for the current version with namespaced
+baggage keys, causality, agent delegation, and mid-round skill transitions.
+
+LangGraph ReAct agent WITH Baggage grouping — the 'after' state.
 
 Same agent logic as the baseline, but with gen_ai.group.id set in W3C Baggage
 at each ReAct round boundary. The BaggageSpanProcessor automatically copies

@@ -1,4 +1,11 @@
-"""LangGraph ReAct agent with BOTH Grouping AND Causality.
+"""NOTE: This is an early prototype kept for historical reference. It uses
+tool_call["_otel"] = carrier (argument injection) for causality, which
+integration testing showed fails in 5/6 frameworks. The recommended
+approach is now sidecar propagation via framework-native extension points.
+See agent_overlapping_groups.py for the current version and ISSUE_CAUSALITY.md
+for the updated proposal.
+
+LangGraph ReAct agent with BOTH Grouping AND Causality.
 
 Grouping: gen_ai.group.id in Baggage (same as agent.py)
 Causality: After LLM returns tool_calls, we inject the current span's

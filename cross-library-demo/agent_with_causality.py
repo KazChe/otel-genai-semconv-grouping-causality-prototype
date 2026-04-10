@@ -1,4 +1,9 @@
-"""Cross-library demo WITH causality — LangChain + LiteLLM + payload traceparent.
+"""NOTE: This is an early prototype kept for historical reference. It uses
+payload argument injection for causality, which integration testing showed
+fails in 5/6 frameworks. The recommended approach is now sidecar propagation.
+See ISSUE_CAUSALITY.md in the repo root for the updated proposal.
+
+Cross-library demo WITH causality — LangChain + LiteLLM + payload traceparent.
 
 This script builds on agent.py by wrapping the LiteLLM call in a parent span
 that stays active during tool execution. The traceparent from this wrapper span

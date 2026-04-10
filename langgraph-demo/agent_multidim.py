@@ -1,4 +1,10 @@
-"""Multi-dimensional grouping demo — proves a span can belong to multiple groups.
+"""NOTE: This is an early prototype kept for historical reference. It uses
+gen_ai.group.type as a single value rather than namespaced keys. See
+agent_overlapping_groups.py for the current version with namespaced baggage
+keys (gen_ai.group.iteration.type, gen_ai.group.skill.id, etc.) that solve
+the overlapping membership concern raised by @Cirilla-zmh.
+
+Multi-dimensional grouping demo — proves a span can belong to multiple groups.
 
 Directly addresses the reviewer's nesting concern from issue #3575:
   "A group may be nested, meaning that an operation can belong to groups

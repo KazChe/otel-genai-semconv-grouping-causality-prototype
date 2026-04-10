@@ -1,4 +1,8 @@
-"""Cross-library demo: LangChain orchestrator + LiteLLM as LLM backend.
+"""NOTE: This is an early prototype kept for historical reference and demo
+screenshots. See ISSUE_CAUSALITY.md and ISSUE_GROUPING.md in the repo root
+for the updated proposals informed by cross-framework integration testing.
+
+Cross-library demo: LangChain orchestrator + LiteLLM as LLM backend.
 
 Directly answers the reviewer's critique from issue #3575:
   "how would I add a link from an execute_tool span created by LangChain
