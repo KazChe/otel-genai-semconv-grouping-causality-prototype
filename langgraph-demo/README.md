@@ -1,5 +1,7 @@
 # LangGraph Demo — After Conventions
 
+> **Note:** This README reflects the original demo state. The demos and screenshots remain valid. Since then, the attribute model has evolved from single-key (`gen_ai.group.id`) to namespaced baggage keys (`gen_ai.group.iteration.type`, `gen_ai.group.skill.id`, etc.) to support overlapping group membership. This directory now also contains `agent_overlapping_groups.py` (overlapping membership + causality + agent delegation + mid-round skill transitions) and `test_overlapping_groups.py` — 6 implemented tests + 16 stubs covering baggage propagation boundaries and framework-specific dispatch patterns. See `ISSUE_GROUPING.md` in the repo root for the updated proposal.
+
 Same agent as baseline, but with **Grouping** via W3C Baggage and `BaggageSpanProcessor`.
 
 ## What this demo proves about Grouping
