@@ -9,32 +9,34 @@ area:gen-ai
 
 ### What's missing?
 
-GenAI semantic conventions have no standard mechanism for expressing causal relationships between LLM inference and tool execution spans. When an LLM returns tool calls, the subsequent `execute_tool` span appears as a sibling of the `chat` span — not as a child. There is no signal in the trace tree that says "this tool execution was triggered by that LLM call."
+GenAI semantic conventions have no standard mechanism for expressing causal relationships between LLM inference and tool execution spans. When an LLM returns tool calls, the subsequent `execute_tool` span appears as a sibling of the `chat` span not as a child. There is no signal in the trace tree that says "this tool execution was triggered by that LLM call"
 
 This matters because debugging agentic workflows requires understanding causality: which LLM decision led to which tool invocation, and in what order. Without causal links, users must reconstruct the chain manually by matching timestamps and tool names across a flat span list.
 
-The problem is compounded when independent instrumentation libraries create inference and tool execution spans separately. Their span lifecycles do not overlap — the inference span ends when the LLM call returns; the tool execution span starts afterward. In-process OTel context propagation cannot link them because the parent span's context is no longer active when the child span is created. This is not specific to any particular framework combination; it affects any setup where inference and tool execution are instrumented by different libraries.
+The problem is compounded when independent instrumentation libraries create inference and tool execution spans separately. Their span lifecycles do not overlap, meaning the inference span ends when the LLM call returns; the tool execution span starts afterward. In-process OTel context propagation cannot link them because the parent span's context is no longer active when the child span is created. This is not specific to any particular framework combination; it affects any setup where inference and tool execution are instrumented by different libraries.
 
 **Open concerns from #3575:**
 
 **Cross-library span linking** (@Cirilla-zmh):
 > "In an agent built with LiteLLM and LangChain, how would I add a link from an `execute_tool` span created by LangChain to an `inference` span created by LiteLLM?"
 
-When instrumentation library A creates an inference span and library B creates a tool execution span independently, their span lifecycles do not overlap. The inference span ends when the LLM call returns; the tool execution span starts afterward. In-process context propagation cannot link them because the parent span's context is no longer active. The question is what mechanism can establish this causal link across independent library span lifecycles.
+When instrumentation library A creates an `inference` span and library B creates a `tool` execution span independently, their span lifecycles do not overlap. As mentioned before, the inference span ends when the LLM call returns; the tool execution span starts afterward. In-process context propagation cannot link them because the parent span's context is no longer active. The question is what mechanism can establish this causal link across independent library span lifecycles?
 
 **Payload fragility** (@Cirilla-zmh):
 > "You can't always assume that you can access the tool-call payload and inject additional information into it. ...parsing and copying may occur, so the context you inject into payload could be lost."
 
-If the solution involves injecting trace context into tool call payloads (analogous to HTTP `traceparent` headers), the injected data must survive the processing pipeline between LLM response and tool execution. In practice, tool call arguments flow through a multi-layer pipeline — Model API to Orchestrator to Tool Executor — and may undergo:
+If the solution involves injecting trace context into tool call payloads (analogous to HTTP `traceparent` headers), the injected data must survive the processing pipeline between LLM response and tool execution. In practice, tool call arguments flow through a multi-layered pipeline that in genaral looke like:
+Model API to Orchestrator to Tool Executor and _may_ undergo:
 
-- JSON serialization/deserialization (single-hop and multi-hop)
-- State persistence round-trips (e.g., Checkpointer serialization via Pydantic models)
-- Schema validation that strips unknown fields
+- JSON serialization/deserialization (single-hop and multi-hop)[^1]
+- State persistence round-trips (e.g. Checkpointer serialization via Pydantic models)[^2]
+- Schema validation that strips unknown - to the underlying framework - fields
 - Strict Pydantic models with `extra="forbid"`
-- Binary serialization (MessagePack, Protobuf)
+//TODO: add links
+- Binary serialization (MessagePack, Protobuf) 
 - Typed object encapsulation (dataclasses, Pydantic models)
 
-Any of these steps could silently discard the injected context. The most dangerous failure mode is not a crash but a **silent loss of observability** — the application continues to run but traces are disconnected. The concern is that the implementation cost of handling these edge cases may outweigh the value the causal linking provides.
+Any of these steps could silently discard the injected context. The most dangerous failure mode is not a crash but a **silent loss of observability** where the application continues to run but traces are disconnected. The concern is that the implementation cost of handling these edge cases may outweigh the value the causal linking provides.
 
 **Grouping vs. dedicated operations** (@Krishnachaitanyakc):
 > "Where do you see the line between 'this is just a grouping concern' and 'this needs its own operation'?"
@@ -81,6 +83,7 @@ Integration testing found that 4 of 6 frameworks already have a native sidecar m
 | Google ADK | `ToolContext.state` | Injected automatically when function declares `tool_context` parameter — rich context with state, session, artifacts |
 | PydanticAI | `RunContext.deps` | Requires `@agent.tool` (not `@tool_plain`) — deps carry carrier alongside tool execution |
 | Semantic Kernel | `KernelContent.Metadata` | Built-in metadata dict on function result content |
+| LangGraph | `config["configurable"]` | Passed to every node via `config` param — `dict[str, Any]` survives graph execution and checkpoint round-trips |
 | AutoGen | None found | Out-of-band correlation required |
 | LlamaIndex | None found | Out-of-band correlation required |
 | CrewAI | None found | Out-of-band correlation required |
@@ -110,6 +113,7 @@ While the carrier must not go in tool call arguments, the carrier format itself 
 | MessagePack binary serialization | Yes |
 | Pydantic `extra="forbid"` | No — hard reject |
 | Schema sanitization (known-fields filter) | No — silent strip |
+| LangGraph checkpoint serde (MessagePack via `JsonPlusSerializer`) | Yes — `dict[str, str]` round-trips through MessagePack ext codes; loss occurs at Pydantic validation layer, not checkpoint layer |
 
 #### 5. Relationship to grouping
 
@@ -126,3 +130,13 @@ Prototype repo: https://github.com/KazChe/otel-genai-semconv-grouping-causality-
 - **Integration tests:** Real framework imports verifying actual envelope shapes and context propagation across 6 frameworks — AutoGen, Haystack, PydanticAI, LlamaIndex, CrewAI, Google ADK ([`frameworks/`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/tree/main/frameworks))
 - **Runnable demos:** Same-process causality (LangGraph), cross-library causality, baseline comparison (flat siblings vs. causal tree)
 - **Key discovery:** simulated tests alone would have given ~25% accuracy on envelope behavior — integration tests were essential for correct classification
+
+---
+
+## Do not add to proposal
+
+[^1]: Single-hop: serialized/deserialized once. Multi-hop: passes through multiple serialize/deserialize cycles, each one risking silent loss of injected fields.
+    - Single-hop: The tool call arguments get serialized to JSON once (e.g. LLM response parsed to JSON) and deserialized once (tool executor reads it). If the deserializer uses strict parsing or rebuilds objects from a known schema, injected fields can be dropped.
+    - Multi-hop: The arguments pass through multiple serialize/deserialize cycles, e.g. LLM response JSON -> orchestrator parses it -> re-serializes to store in state -> deserializes again -> passes to tool executor. Each hop is another opportunity for the injected trace context to be silently stripped.
+
+[^2]: https://github.com/langchain-ai/langgraph/tree/main/libs/checkpoint
