@@ -9,7 +9,7 @@ area:gen-ai
 
 ### What's missing?
 
-GenAI semantic conventions have no standard mechanism for expressing causal relationships between LLM inference and tool execution spans. When an LLM returns tool calls, the subsequent `execute_tool` span appears as a sibling of the `chat` span not as a child. There is no signal in the trace tree that says "this tool execution was triggered by that LLM call"
+GenAI semantic conventions have no standard way to express that a specific `execute_tool` span was triggered by a specific LLM inference span. When an LLM returns tool calls, the subsequent `execute_tool` span appears as a sibling of the `chat` span — not as a child. There is no signal in the trace tree that says "this tool execution was triggered by that LLM call."
 
 This matters because debugging agentic workflows requires understanding causality: which LLM decision led to which tool invocation, and in what order. Without causal links, users must reconstruct the chain manually by matching timestamps and tool names across a flat span list.
 
@@ -18,30 +18,55 @@ The problem is compounded when independent instrumentation libraries create infe
 **Open concerns from #3575:**
 
 **Cross-library span linking** (@Cirilla-zmh):
+
 > "In an agent built with LiteLLM and LangChain, how would I add a link from an `execute_tool` span created by LangChain to an `inference` span created by LiteLLM?"
 
 When instrumentation library A creates an `inference` span and library B creates a `tool` execution span independently, their span lifecycles do not overlap. As mentioned before, the inference span ends when the LLM call returns; the tool execution span starts afterward. In-process context propagation cannot link them because the parent span's context is no longer active. The question is what mechanism can establish this causal link across independent library span lifecycles?
 
 **Payload fragility** (@Cirilla-zmh):
+
 > "You can't always assume that you can access the tool-call payload and inject additional information into it. ...parsing and copying may occur, so the context you inject into payload could be lost."
 
-If the solution involves injecting trace context into tool call payloads (analogous to HTTP `traceparent` headers), the injected data must survive the processing pipeline between LLM response and tool execution. In practice, tool call arguments flow through a multi-layered pipeline that in genaral looke like:
-Model API to Orchestrator to Tool Executor and _may_ undergo:
+If the solution involves injecting trace context into tool call payloads (analogous to HTTP `traceparent` headers), the injected data must survive the processing pipeline between LLM response and tool execution. In practice, tool call arguments flow through a multi-layered pipeline — Model API to Orchestrator to Tool Executor — and may undergo:
 
-- JSON serialization/deserialization (single-hop and multi-hop)[^1]
-- State persistence round-trips (e.g. Checkpointer serialization via Pydantic models)[^2]
-- Schema validation that strips unknown - to the underlying framework - fields
+- JSON serialization/deserialization (single-hop and multi-hop)
+- State persistence round-trips (e.g., Checkpointer serialization via Pydantic models)
+- Schema validation that strips fields unknown to the underlying framework
 - Strict Pydantic models with `extra="forbid"`
-//TODO: add links
-- Binary serialization (MessagePack, Protobuf) 
+- Binary serialization (MessagePack, Protobuf)
 - Typed object encapsulation (dataclasses, Pydantic models)
 
 Any of these steps could silently discard the injected context. The most dangerous failure mode is not a crash but a **silent loss of observability** where the application continues to run but traces are disconnected. The concern is that the implementation cost of handling these edge cases may outweigh the value the causal linking provides.
 
 **Grouping vs. dedicated operations** (@Krishnachaitanyakc):
+
 > "Where do you see the line between 'this is just a grouping concern' and 'this needs its own operation'?"
 
 Causal linking is distinct from grouping. Grouping says "these spans belong to the same round." Causality says "this span was triggered by that span." A `chat` span that triggers an `execute_tool` span has a causal relationship that grouping alone cannot express — the tool execution has a specific parent, not just a shared tag.
+
+**Why not span links?**
+
+Span links are valid OTel constructs and can be useful for expressing association between spans. However, they do not by themselves recover the parent-child causal tree this proposal is trying to standardize. The goal here is not merely to associate spans — it is to recover the causal execution tree in a way that backends can render naturally as nested parent-child hierarchies. Span links would require every backend to implement custom rendering logic to reconstruct causality from link metadata, whereas parent-child relationships are already the native hierarchy model in most trace viewer.
+
+**What this looks like in a trace:**
+
+```text
+Without causal propagation (flat siblings):
+  invoke_agent
+  ├─ chat gpt-4o          (round 1)
+  ├─ execute_tool search   ← sibling, no causal signal
+  ├─ chat gpt-4o          (round 2)
+  ├─ execute_tool calc     ← sibling, no causal signal
+  └─ chat gpt-4o          (round 3)
+
+With sidecar propagation (causal tree):
+  invoke_agent
+  ├─ chat gpt-4o               (round 1)
+  │   └─ execute_tool search   ← child of the chat that triggered it
+  ├─ chat gpt-4o               (round 2)
+  │   └─ execute_tool calc     ← child of the chat that triggered it
+  └─ chat gpt-4o               (round 3, no tool call)
+```
 
 ### Describe the solution you'd like
 
@@ -51,42 +76,43 @@ Payload-level `traceparent` propagation via framework-native sidecar mechanisms 
 
 Integration testing across 6 major frameworks revealed that **injecting the carrier into tool call arguments fails in 5 of 6 frameworks**. The carrier is either silently stripped or hard rejected before reaching the tool function:
 
-| Framework | What happens to extras in args | Mechanism | Classification |
-|-----------|-------------------------------|-----------|----------------|
-| AutoGen | Silently discarded | `model_validate()` with `extra="ignore"` | Silent strip |
-| CrewAI | Silently discarded | Internal filtering between `run()` and `_run()` | Silent strip |
-| Google ADK | Silently discarded | `{k:v for k,v in args if k in valid_params}` | Silent strip |
-| Haystack | Crashes | Python function signature rejects unknown kwargs | Hard reject |
-| PydanticAI | Crashes | `PluggableSchemaValidator` raises `extra_forbidden` | Hard reject |
-| LlamaIndex | Crashes | Python function signature rejects unknown kwargs | Hard reject |
+| Framework  | What happens to extras in args | Mechanism                                           | Classification |
+| ---------- | ------------------------------ | --------------------------------------------------- | -------------- |
+| AutoGen    | Silently discarded             | `model_validate()` with `extra="ignore"`            | Silent strip   |
+| CrewAI     | Silently discarded             | Internal filtering between `run()` and `_run()`     | Silent strip   |
+| Google ADK | Silently discarded             | `{k:v for k,v in args if k in valid_params}`        | Silent strip   |
+| Haystack   | Crashes                        | Python function signature rejects unknown kwargs    | Hard reject    |
+| PydanticAI | Crashes                        | `PluggableSchemaValidator` raises `extra_forbidden` | Hard reject    |
+| LlamaIndex | Crashes                        | Python function signature rejects unknown kwargs    | Hard reject    |
 
 The silent strip is the most dangerous failure mode — the application continues to run but traces are silently disconnected. Three of six frameworks exhibit this behavior. AutoGen and PydanticAI both declare `additionalProperties: false` in their tool schemas, but the runtime enforcement is opposite — AutoGen silently strips while PydanticAI raises `ValidationError`. The schema alone does not predict runtime behavior.
 
 This means the original `tool_call["_otel"] = carrier` approach from the prototype is not viable as a general-purpose convention. The carrier must travel through a different channel.
 
-#### 2. Mechanism: sidecar propagation (normative)
+#### 2. Recommended mechanism: sidecar propagation
 
 The carrier is a `dict[str, str]` containing `traceparent` (and optionally `tracestate`), injected via standard OTel `propagate.inject()` and extracted via `propagate.extract()`. This is not a new propagation mechanism — it is the existing W3C Trace Context standard applied to each framework's native extension point.
 
 The convention should define:
+
 - **The carrier format** — `dict[str, str]` with `traceparent` key (already standardized by W3C)
-- **The propagation contract** — carrier MUST be placed in a framework's native sidecar, NOT in tool call arguments
+- **The propagation guidance** — carrier **should** be placed in a framework-native sidecar when such an extension point exists; carrier **must not** be placed in tool call arguments as a general-purpose convention
 - **The extraction contract** — instrumentation authors extract the carrier from the sidecar and use it as parent context for the tool execution span
 
-#### 3. Framework sidecar mapping (strong guidance)
+#### 3. Observed or viable sidecar extension points
 
-Integration testing found that 4 of 6 frameworks already have a native sidecar mechanism suitable for carrier injection:
+Integration testing found that 4 of 6 frameworks already have a native sidecar mechanism suitable for carrier injection. LangGraph is included as a same-process demonstrator, not as part of the six-framework tool-envelope matrix:
 
-| Framework | Native sidecar | How carrier rides |
-|-----------|---------------|-------------------|
-| Haystack | `ToolCall.extra` field | `tc.extra = {"_otel": carrier}` — directly on the tool call object, strongest native fit |
-| Google ADK | `ToolContext.state` | Injected automatically when function declares `tool_context` parameter — rich context with state, session, artifacts |
-| PydanticAI | `RunContext.deps` | Requires `@agent.tool` (not `@tool_plain`) — deps carry carrier alongside tool execution |
-| Semantic Kernel | `KernelContent.Metadata` | Built-in metadata dict on function result content |
-| LangGraph | `config["configurable"]` | Passed to every node via `config` param — `dict[str, Any]` survives graph execution and checkpoint round-trips |
-| AutoGen | None found | Out-of-band correlation required |
-| LlamaIndex | None found | Out-of-band correlation required |
-| CrewAI | None found | Out-of-band correlation required |
+| Framework       | Native sidecar           | How carrier rides                                                                                                    |
+| --------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| Haystack        | `ToolCall.extra` field   | `tc.extra = {"_otel": carrier}` — directly on the tool call object, strongest native fit                             |
+| Google ADK      | `ToolContext.state`      | Injected automatically when function declares `tool_context` parameter — rich context with state, session, artifacts |
+| PydanticAI      | `RunContext.deps`        | Requires `@agent.tool` (not `@tool_plain`) — deps carry carrier alongside tool execution                             |
+| Semantic Kernel | `KernelContent.Metadata` | Built-in metadata dict on function result content                                                                    |
+| LangGraph       | `config["configurable"]` | Passed to every node via `config` param — `dict[str, Any]` survives graph execution and checkpoint round-trips       |
+| AutoGen         | None found               | Out-of-band correlation required                                                                                     |
+| LlamaIndex      | None found               | Out-of-band correlation required                                                                                     |
+| CrewAI          | None found               | Out-of-band correlation required                                                                                     |
 
 **Sidecar vs Out-of-Band — two different integration models:**
 
@@ -97,27 +123,29 @@ Integration testing found that 4 of 6 frameworks already have a native sidecar m
 This works, but it's hand-rolled plumbing: every instrumentor for every framework without a native sidecar must independently implement the storage, keying, lifecycle management, and cleanup. Without a convention, each implementation reinvents this mapping differently — which is exactly the kind of fragmentation that a semantic convention should prevent.
 
 The convention should:
+
 - **Recommend sidecar propagation** as the primary approach for frameworks that provide an extension point
-- **Define a standard out-of-band contract** (storage interface, key format, lifecycle) so instrumentors for frameworks without a native sidecar don't each invent their own
-- **Encourage framework authors** to add a metadata/context/extra field if they don't have one — pointing to Haystack's `ToolCall.extra` and Google ADK's `ToolContext` as successful examples
+- **Document out-of-band correlation** as a fallback interoperability pattern for frameworks without native sidecars, encouraging convergence on stable correlation inputs such as tool call IDs
+- **Encourage framework authors** to expose a metadata, context, or extra field over time — pointing to Haystack's `ToolCall.extra` and Google ADK's `ToolContext` as successful examples
 
 #### 4. Serialization resilience (informational)
 
 While the carrier must not go in tool call arguments, the carrier format itself (`dict[str, str]`) is resilient across common serialization paths. This matters for the sidecar mechanisms that do serialize:
 
-| Transformation | Carrier survives? |
-|----------------|-------------------|
-| JSON round-trip (single and multi-hop) | Yes |
-| State persistence (Pydantic `extra="allow"` round-trips) | Yes |
-| `copy.deepcopy` | Yes |
-| MessagePack binary serialization | Yes |
-| Pydantic `extra="forbid"` | No — hard reject |
-| Schema sanitization (known-fields filter) | No — silent strip |
+| Transformation                                                    | Carrier survives?                                                                                                                |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| JSON round-trip (single and multi-hop)                            | Yes                                                                                                                              |
+| State persistence (Pydantic `extra="allow"` round-trips)          | Yes                                                                                                                              |
+| `copy.deepcopy`                                                   | Yes                                                                                                                              |
+| MessagePack binary serialization                                  | Yes                                                                                                                              |
+| Pydantic `extra="forbid"`                                         | No — hard reject                                                                                                                 |
+| Schema sanitization (known-fields filter)                         | No — silent strip                                                                                                                |
 | LangGraph checkpoint serde (MessagePack via `JsonPlusSerializer`) | Yes — `dict[str, str]` round-trips through MessagePack ext codes; loss occurs at Pydantic validation layer, not checkpoint layer |
 
 #### 5. Relationship to grouping
 
 Causal linking and grouping are complementary layers of the same contract:
+
 - **Grouping** (baggage) handles loose structural correlation: "these spans belong to the same round"
 - **Causality** (sidecar traceparent) handles directed relationships: "this tool execution was triggered by that LLM call"
 - Together they provide both structural and temporal relationships in the trace tree
@@ -130,13 +158,3 @@ Prototype repo: https://github.com/KazChe/otel-genai-semconv-grouping-causality-
 - **Integration tests:** Real framework imports verifying actual envelope shapes and context propagation across 6 frameworks — AutoGen, Haystack, PydanticAI, LlamaIndex, CrewAI, Google ADK ([`frameworks/`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/tree/main/frameworks))
 - **Runnable demos:** Same-process causality (LangGraph), cross-library causality, baseline comparison (flat siblings vs. causal tree)
 - **Key discovery:** simulated tests alone would have given ~25% accuracy on envelope behavior — integration tests were essential for correct classification
-
----
-
-## Do not add to proposal
-
-[^1]: Single-hop: serialized/deserialized once. Multi-hop: passes through multiple serialize/deserialize cycles, each one risking silent loss of injected fields.
-    - Single-hop: The tool call arguments get serialized to JSON once (e.g. LLM response parsed to JSON) and deserialized once (tool executor reads it). If the deserializer uses strict parsing or rebuilds objects from a known schema, injected fields can be dropped.
-    - Multi-hop: The arguments pass through multiple serialize/deserialize cycles, e.g. LLM response JSON -> orchestrator parses it -> re-serializes to store in state -> deserializes again -> passes to tool executor. Each hop is another opportunity for the injected trace context to be silently stripped.
-
-[^2]: https://github.com/langchain-ai/langgraph/tree/main/libs/checkpoint
