@@ -1,136 +1,279 @@
-# OTel GenAI Semantic Conventions — Grouping & Causality Prototype
+Yes — I would redo the README pretty aggressively.
 
-> **Note:** This README reflects the original prototype state. The proposal is being significantly expanded based on reviewer feedback, cross-framework integration testing (6 frameworks verified: AutoGen, Haystack, PydanticAI, LlamaIndex, CrewAI, Google ADK), and evolution of the attribute model from single-key to namespaced baggage keys. This proposal is being split into two separate issues — one for grouping attributes and one for causal span linking. A full README update is in progress.
+Right now the README still carries too much of the **old thesis** and prototype-era framing, including:
 
-Prototype for [open-telemetry/semantic-conventions#3575](https://github.com/open-telemetry/semantic-conventions/issues/3575).
+* grouping as just `gen_ai.group.id`
+* causality as payload injection into tool-call metadata
+* a "before/after" story that is stronger than what the current proposal now claims as semconv scope 
 
-This repo demonstrates two proposed primitives for OpenTelemetry GenAI semantic conventions:
+Since your proposal has now split into **two issues** — grouping and causality — the README should stop sounding like "this repo proves the final semconv" and instead sound like:
 
-- **Grouping** — `gen_ai.group.id` carried in W3C Baggage, copied to span attributes via `BaggageSpanProcessor`. Allows spans to be grouped into logical units (ReAct rounds, tasks, steps) without creating wrapper spans.
-- **Causality** — Payload-level `traceparent` injection into LLM tool call metadata. Establishes causal links ("this tool was triggered by that LLM call") across library and process boundaries.
+**This repo is the research and prototype evidence base for two related GenAI semconv proposals.**
 
-## Before / After
+That framing matches where you are now much better. Your current issue drafts are clearly split into:
 
-|               | Before (baseline)                            | After (with conventions)                                |
-| ------------- | -------------------------------------------- | ------------------------------------------------------- |
-| **Grouping**  | Flat spans — backend guesses from timestamps | Each span tagged with `gen_ai.group.id=round-N`         |
-| **Causality** | Tool spans are siblings of LLM spans         | Tool spans parented to the LLM call that triggered them |
+* grouping representation plus interoperability guidance 
+* causal span linking plus sidecar/out-of-band guidance 
 
-### Before (Aspire) — Baseline
+## How I would go about redoing it
 
-![Baseline — flat spans](screenshots/baseline-aspire-before.png)
+I would change the README from a demo-first artifact into a **proposal-support artifact** with this structure:
 
-No `gen_ai.group.id`, no causal links. Backend guesses from timestamps.
+1. **What this repo is**
+2. **What changed from the original prototype**
+3. **The two proposal tracks**
+4. **What is actually tested**
+5. **What is demonstrated vs what is only analyzed**
+6. **Repo layout**
+7. **How to run specific evidence paths**
+8. **Key findings**
+9. **How this repo supports the two issue drafts**
 
-### After (Aspire) — Single-dimension Grouping
+That way, someone like Cirilla-zmh can skim it and quickly understand:
 
-![Grouping before/after](screenshots/grouping-before-after-aspire.png)
+* what question you were trying to answer
+* what was disproven
+* what survived
+* where the real evidence is
 
-Spans now carry `gen_ai.group.id=round-1` and `gen_ai.group.type=react_iteration`.
+## The main tone shift
 
-<!-- ### After (Aspire) — Multi-dimensional Grouping
+Old README tone:
 
-![Multi-dim chat span](screenshots/multidim-chat-span-before-after.png)
+* "here are two primitives"
+* "before/after"
+* "this is the convention"
 
-A single `chat` span belongs to 4 dimensions simultaneously: round, round type, agent, and phase.
+New README tone:
 
-![Multi-dim execute_tool span](screenshots/multidim-execute-tool-before-after.png)
+* "this repo investigates whether these patterns hold across frameworks"
+* "some original ideas were refuted"
+* "the outcome is two narrower proposals"
+* "the repo should be read as evidence, not as the spec itself"
 
-`execute_tool` span: same round and agent as `chat`, but `gen_ai.phase=execution` instead of `reasoning`. -->
+That will make the repo feel much more credible.
 
-### After (Aspire) — Causality via Payload Traceparent
+---
 
-![Causality demo](screenshots/langgraph-causality-demo.png)
+## Draft README
 
-**Left (causality demo):** `execute_tool` spans are **nested under** the `chat` spans that triggered them — a parent-child relationship established via payload `traceparent` injection. The LLM call's span context was injected into the tool call payload (`tool_call["_otel"] = carrier`), and the tool executor extracted it to set the parent (`extract(tool_call["_otel"])`). **Right (baseline):** `chat` and `execute_tool` are flat siblings — no causal link, backend cannot tell which LLM call triggered which tool.
+You can use this as a starting point.
 
-### Cross-Library (LangChain + LiteLLM) — Grouping works, Causality needs payload traceparent
+---
 
-![Cross-library completion span](screenshots/cross-library-demo-completion-grouping-needs-payload-traceparent.png)
+# OTel GenAI Semantic Conventions — Grouping & Causality Research Prototype
 
-LiteLLM's `completion` span carries `gen_ai.group.id=round-1` — **grouping works across library boundaries**. LiteLLM knows nothing about our convention; `BaggageSpanProcessor` copied it automatically.
+This repository contains the research, prototype code, and framework tests that support two related OpenTelemetry GenAI semantic convention proposals:
 
-![Cross-library execute_tool span](screenshots/cross-library-demo-executetool-grouping-needs-payload-traceparent.png)
+* **Generic grouping attributes for agentic workflow spans**
+* **Causal span linking for LLM-triggered tool execution**
 
-`execute_tool` is a flat sibling of `completion`, not a child — **causality requires payload traceparent injection** when spans are created by different libraries with different lifecycles. This is the evidence that the convention must specify traceparent propagation at the message/payload level.
+These proposals were originally explored together, but are now split into two narrower issue drafts because the problems are related but distinct:
 
-### Cross-Library WITH Causality — `agent_with_causality.py`
+* **Grouping** answers: "which spans belong to the same logical unit?"
+* **Causality** answers: "which LLM decision triggered which tool execution?"
 
-![Cross-library causality chat span](screenshots/cross-library-causality-demo-chat.png)
+This repo is best read as an **evidence base and prototype harness**, not as the spec itself.
 
-After adding payload traceparent injection: trace goes from Depth 2 (flat) to **Depth 3 (nested)**. The `chat` span wraps both LiteLLM's `completion` and `execute_tool` as children.
+## Current status
 
-![Cross-library causality completion](screenshots/cross-library-causality-demo-grouping-with-causality-completion.png)
+The original prototype started from a simpler model:
 
-LiteLLM's `completion` span — created by LiteLLM's instrumentor, not our code — carries `gen_ai.group.id=round-1` (grouping) AND is nested under `chat` (causality). **Both primitives working across library boundaries.**
+* grouping via a single `gen_ai.group.id`
+* causality via payload-level `traceparent` injection into tool call data
 
-![Cross-library causality execute_tool](screenshots/cross-library-causality-demo-grouping-with-causality-executetool.png)
+Cross-framework testing showed that the reality is more nuanced:
 
-`execute_tool` is also a child of `chat`, with `gen_ai.group.id=round-1`. Cross-library grouping + causality — **working.**
+* the grouping problem and the causality problem should be treated separately
+* baggage-based grouping is promising, but continuity depends on execution boundaries
+* injecting `traceparent` directly into tool-call arguments is **not** a reliable general-purpose convention across frameworks
+* framework-native sidecars and out-of-band correlation are more realistic causal-linking patterns than modifying tool-call arguments directly
 
-> Note: If you see a `gen_ai.causality` attribute on spans in earlier screenshots, this is a **debug label only** — not a proposed semantic convention. The causality is proven by the parent-child relationship in the trace tree itself.
+As a result, the proposal evolved into two separate drafts.
 
-## Demos
+## What this repo is for
 
-| Demo                                       | Framework           | Purpose                                                                        |
-| ------------------------------------------ | ------------------- | ------------------------------------------------------------------------------ |
-| [baseline/](baseline/)                     | LangGraph           | **Before** — flat spans, no conventions                                        |
-| [langgraph-demo/](langgraph-demo/)         | LangGraph           | **After** — Baggage grouping + payload traceparent                             |
-| [cross-library-demo/](cross-library-demo/) | LangChain + LiteLLM | Cross-library span linking — grouping works, causality via payload traceparent |
-| [autogen-demo/](autogen-demo/)             | AutoGen v0.4        | Adversarial validation — Baggage survives async event-driven runtime           |
+This repo exists to answer four practical questions:
 
-### AutoGen — Baggage Survives Async Dispatch
+1. Can grouping information propagate across spans created by different libraries?
+2. What execution boundaries preserve baggage automatically, and which do not?
+3. Can causal parent context safely ride inside tool-call payloads?
+4. If not, what alternative carrier patterns are viable across real frameworks?
 
-![Baggage survives AutoGen async dispatch](screenshots/does-baggage-survive-autogen-async-dispatch.png)
+## The two proposal tracks
 
-AutoGen's internally created `autogen process worker` span carries `gen_ai.group.id=autogen-session-1`, `gen_ai.group.type=agent_collaboration`, and `gen_ai.agent.id=planner-worker-team`. We did not create this span, AutoGen's runtime did. The `BaggageSpanProcessor` copied our Baggage to it automatically, across async message passing between the planner and worker agents. AutoGen knows nothing about these attributes, it just created its autogen process worker span as usual, and our processor attached the grouping data automatically. We proved that baggage-based grouping can survive an async, event-driven agent runtime and be applied to spans created internally by the framework itselfnot only spans created by application code - Note: this does not prove yet that every async framework preserves baggage the same way that causality is fully modeled, only that AutoGen’s built-in hierarchy appears intact in this case
+### 1. Grouping
 
-## Backends
+The grouping proposal explores how spans can be grouped into logical units such as rounds, skills, tasks, or phases without inventing wrapper spans for every agentic pattern.
 
-- **Aspire** (open source) anyone can reproduce, shows raw span data with attributes
-- **Aegis** (open source) for another UX - I felt it has better querying capabilities
-- **Galileo** still work in progress (production AI observability) — will show what an observability backend can build with these conventions
+Current direction:
 
-## Quick Start
+* represent grouping as attributes under a `gen_ai.group.*` namespace
+* use W3C Baggage as the recommended transport
+* treat execution-boundary behavior as interoperability guidance, not semantic definition 
+
+### 2. Causality
+
+The causality proposal explores how to represent that a specific `execute_tool` span was triggered by a specific LLM inference span.
+
+Current direction:
+
+* do **not** rely on injecting context into tool-call arguments as a general-purpose convention
+* prefer framework-native sidecar carriers where available
+* use out-of-band correlation as a fallback when no native sidecar exists 
+
+## Key findings from this repo
+
+### Grouping
+
+* Baggage-based grouping can work across library boundaries and across some framework-managed spans.
+* Propagation behavior is framework- and boundary-dependent.
+* Sync, async, thread, and process boundaries should not be treated as equivalent.
+
+### Causality
+
+* Injecting context into tool-call arguments failed in most tested frameworks through either:
+
+  * **silent strip**, or
+  * **hard reject**
+* Schema shape alone did not reliably predict runtime behavior.
+* The carrier format itself is generally durable; the fragile part is the framework's validation/sanitization path. 
+
+## What is tested here
+
+### Simulated tests
+
+The simulated tests focus on failure modes and durability questions such as:
+
+* JSON round-trips
+* multi-hop serialization
+* Pydantic `extra="allow"` vs `extra="forbid"`
+* schema sanitization
+* MessagePack round-trips
+* sidecar and out-of-band mitigations
+
+These tests are useful for reasoning about the space, but they were **not sufficient on their own** to predict real framework behavior.
+
+### Integration tests
+
+The framework directories contain real imports and targeted tests for:
+
+* envelope/tool-call shape
+* unknown-field behavior
+* context/baggage propagation behavior
+
+Frameworks currently covered include:
+
+* AutoGen
+* Haystack
+* PydanticAI
+* LlamaIndex
+* CrewAI
+* Google ADK
+
+These integration tests were essential because several assumptions that looked reasonable in simulated tests did **not** hold in real frameworks. 
+
+## What is demonstrated vs analyzed
+
+This repo contains both runnable demos and broader research notes.
+
+### Runnable demos
+
+These are primarily useful for showing visual trace effects and proving same-process or cross-library patterns:
+
+* `langgraph-demo/` — grouping and causality demonstrations in a controlled environment
+* `cross-library-demo/` — cross-library behavior and why grouping and causality diverge
+
+### Framework evidence
+
+The `frameworks/` directory is the most important part of the repo for proposal review. It contains:
+
+* targeted tests
+* per-framework findings
+* evidence backing the proposal claims
+
+## Repo layout
+
+```text
+langgraph-demo/        # Same-process demonstration environment + grouping tests
+cross-library-demo/    # Cross-library demonstration environment + causality tests
+frameworks/            # Integration tests and findings by framework
+research-notes.md      # Consolidated research notes and interpretation
+ISSUE_GROUPING.md      # Current grouping proposal draft
+ISSUE_CAUSALITY.md     # Current causality proposal draft
+```
+
+## How to read this repo
+
+If you are reviewing the proposal direction, start here:
+
+1. `ISSUE_GROUPING.md`
+2. `ISSUE_CAUSALITY.md`
+3. `research-notes.md`
+4. `frameworks/*/DISCOVERIES.md`
+5. the corresponding `test_envelope_shape.py` and `test_context_propagation.py` files
+
+If you want to run the demos, then use the demo folders afterward.
+
+## Running the tests
+
+Tests use `InMemorySpanExporter` — no Docker needed.
+
+### Simulated tests
 
 ```bash
-# Start infrastructure (Collector + Aspire + Jaeger)
+# Causality — payload traceparent resilience (20 tests)
+cd cross-library-demo
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python -m pytest test_payload_traceparent.py -v
+
+# Grouping — overlapping membership + baggage propagation
+cd langgraph-demo
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python -m pytest test_overlapping_groups.py -v
+```
+
+### Framework integration tests
+
+Run these selectively by framework. Each has its own venv to avoid dependency conflicts:
+
+```bash
+cd frameworks/haystack
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python -m pytest -v -s
+
+# Same pattern for: autogen, pydantic-ai, llamaindex, crewai, google-adk
+```
+
+## Running the demos
+
+Demos send traces to an OTLP collector for visualization. Start infrastructure first:
+
+```bash
 docker compose up -d
 
-# Run baseline (before — flat spans, no conventions)
-cd baseline && python3 -m venv .venv && source .venv/bin/activate
+# Run the current demo (grouping + causality + delegation + skill transitions)
+cd langgraph-demo
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python agent.py
-
-# Run langgraph demos (after — grouping + causality)
-cd ../langgraph-demo && source ../baseline/.venv/bin/activate
-pip install opentelemetry-processor-baggage
-python agent.py               # grouping only
-python agent_multidim.py       # multi-dimensional grouping
-python agent_causality.py      # grouping + causality
-
-# Run cross-library demos (LangChain + LiteLLM)
-cd ../cross-library-demo && source ../baseline/.venv/bin/activate
-pip install langchain litellm openinference-instrumentation-litellm
-python agent.py                  # grouping only (shows WHY causality is needed)
-python agent_with_causality.py   # grouping + causality
-
-# Run AutoGen demo (async event-driven validation — requires OPENAI_API_KEY in .env)
-cd ../autogen-demo && python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python agent.py
+python agent_overlapping_groups.py
 ```
 
 Aspire dashboard: http://localhost:18888
+Jaeger UI: http://localhost:16686
 
-## Generalizability Matrix
+The demo prints a self-documenting span summary to stdout — you can see the attributes without needing a trace viewer.
 
-| Framework                     | Baggage (grouping)    | Payload traceparent (causality)     | Status   |
-| ----------------------------- | --------------------- | ----------------------------------- | -------- |
-| LangGraph / LlamaIndex        | Works                 | Works                               | Tested   |
-| AutoGen v0.4 (async)          | Works                 | Message envelope is natural carrier | Tested   |
-| CrewAI                        | Works (built-in OTel) | Task delegation payload is carrier  | Analysis |
-| Cross-language (Python//.NET) | Won't cross boundary  | Only viable mechanism               | Analysis |
-| MCP-based tools               | Won't cross process   | Already HTTP, traceparent native    | Analysis |
+## Important caveat
 
-> These are not two independent ideas. They are two layers of the same contract. Within a single runtime, use Baggage. At every boundary that crosses async, language, or process lines, use payload traceparent.
+The code and examples in this repo should not be read as the final proposed semantic convention shape.
+
+Some names and patterns in the prototype reflect intermediate exploration rather than settled proposal language. The issue drafts are the current source of truth for proposal framing.
+
+## Related drafts
+
+* `ISSUE_GROUPING.md`- generic grouping attributes for agentic workflow spans
+* `ISSUE_CAUSALITY.md` — causal span linking for LLM-triggered tool execution
