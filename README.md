@@ -1,67 +1,14 @@
-**This repo is the research and prototype evidence base for two related GenAI semconv proposals.**
-
-That framing matches where you are now much better. Your current issue drafts are clearly split into:
-
-* grouping representation plus interoperability guidance 
-* causal span linking plus sidecar/out-of-band guidance 
-
-## How I would go about redoing it
-
-I would change the README from a demo-first artifact into a **proposal-support artifact** with this structure:
-
-1. **What this repo is**
-2. **What changed from the original prototype**
-3. **The two proposal tracks**
-4. **What is actually tested**
-5. **What is demonstrated vs what is only analyzed**
-6. **Repo layout**
-7. **How to run specific evidence paths**
-8. **Key findings**
-9. **How this repo supports the two issue drafts**
-
-That way, someone like Cirilla-zmh can skim it and quickly understand:
-
-* what question you were trying to answer
-* what was disproven
-* what survived
-* where the real evidence is
-
-## The main tone shift
-
-Old README tone:
-
-* "here are two primitives"
-* "before/after"
-* "this is the convention"
-
-New README tone:
-
-* "this repo investigates whether these patterns hold across frameworks"
-* "some original ideas were refuted"
-* "the outcome is two narrower proposals"
-* "the repo should be read as evidence, not as the spec itself"
-
-That will make the repo feel much more credible.
-
----
-
-## Draft README
-
-You can use this as a starting point.
-
----
-
 # OTel GenAI Semantic Conventions — Grouping & Causality Research Prototype
 
 This repository contains the research, prototype code, and framework tests that support two related OpenTelemetry GenAI semantic convention proposals:
 
-* **Generic grouping attributes for agentic workflow spans**
-* **Causal span linking for LLM-triggered tool execution**
+- **Generic grouping attributes for agentic workflow spans**
+- **Causal span linking for LLM-triggered tool execution**
 
 These proposals were originally explored together, but are now split into two narrower issue drafts because the problems are related but distinct:
 
-* **Grouping** answers: "which spans belong to the same logical unit?"
-* **Causality** answers: "which LLM decision triggered which tool execution?"
+- **Grouping** answers: "which spans belong to the same logical unit?"
+- **Causality** answers: "which LLM decision triggered which tool execution?"
 
 This repo is best read as an **evidence base and prototype harness**, not as the spec itself.
 
@@ -69,15 +16,15 @@ This repo is best read as an **evidence base and prototype harness**, not as the
 
 The original prototype started from a simpler model:
 
-* grouping via a single `gen_ai.group.id`
-* causality via payload-level `traceparent` injection into tool call data
+- grouping via a single `gen_ai.group.id`
+- causality via payload-level `traceparent` injection into tool call data
 
 Cross-framework testing showed that the reality is more nuanced:
 
-* the grouping problem and the causality problem should be treated separately
-* baggage-based grouping is promising, but continuity depends on execution boundaries
-* injecting `traceparent` directly into tool-call arguments is **not** a reliable general-purpose convention across frameworks
-* framework-native sidecars and out-of-band correlation are more realistic causal-linking patterns than modifying tool-call arguments directly
+- the grouping problem and the causality problem should be treated separately
+- baggage-based grouping is promising, but continuity depends on execution boundaries
+- injecting `traceparent` directly into tool-call arguments is **not** a reliable general-purpose convention across frameworks
+- framework-native sidecars and out-of-band correlation are more realistic causal-linking patterns than modifying tool-call arguments directly
 
 As a result, the proposal evolved into two separate drafts.
 
@@ -98,9 +45,9 @@ The grouping proposal explores how spans can be grouped into logical units such 
 
 Current direction:
 
-* represent grouping as attributes under a `gen_ai.group.*` namespace
-* use W3C Baggage as the recommended transport
-* treat execution-boundary behavior as interoperability guidance, not semantic definition 
+- represent grouping as attributes under a `gen_ai.group.*` namespace
+- use W3C Baggage as the recommended transport
+- treat execution-boundary behavior as interoperability guidance, not semantic definition
 
 ### 2. Causality
 
@@ -108,26 +55,26 @@ The causality proposal explores how to represent that a specific `execute_tool` 
 
 Current direction:
 
-* do **not** rely on injecting context into tool-call arguments as a general-purpose convention
-* prefer framework-native sidecar carriers where available
-* use out-of-band correlation as a fallback when no native sidecar exists 
+- do **not** rely on injecting context into tool-call arguments as a general-purpose convention
+- prefer framework-native sidecar carriers where available
+- use out-of-band correlation as a fallback when no native sidecar exists
 
 ## Key findings from this repo
 
 ### Grouping
 
-* Baggage-based grouping can work across library boundaries and across some framework-managed spans.
-* Propagation behavior is framework- and boundary-dependent.
-* Sync, async, thread, and process boundaries should not be treated as equivalent.
+- Baggage-based grouping can work across library boundaries and across some framework-managed spans.
+- Propagation behavior is framework- and boundary-dependent.
+- Sync, async, thread, and process boundaries should not be treated as equivalent.
 
 ### Causality
 
-* Injecting context into tool-call arguments failed in most tested frameworks through either:
+- Injecting context into tool-call arguments failed in most tested frameworks through either:
+  - **silent strip**, or
+  - **hard reject**
 
-  * **silent strip**, or
-  * **hard reject**
-* Schema shape alone did not reliably predict runtime behavior.
-* The carrier format itself is generally durable; the fragile part is the framework's validation/sanitization path. 
+- Schema shape alone did not reliably predict runtime behavior.
+- The carrier format itself is generally durable; the fragile part is the framework's validation/sanitization path.
 
 ## What is tested here
 
@@ -135,12 +82,12 @@ Current direction:
 
 The simulated tests focus on failure modes and durability questions such as:
 
-* JSON round-trips
-* multi-hop serialization
-* Pydantic `extra="allow"` vs `extra="forbid"`
-* schema sanitization
-* MessagePack round-trips
-* sidecar and out-of-band mitigations
+- JSON round-trips
+- multi-hop serialization
+- Pydantic `extra="allow"` vs `extra="forbid"`
+- schema sanitization
+- MessagePack round-trips
+- sidecar and out-of-band mitigations
 
 These tests are useful for reasoning about the space, but they were **not sufficient on their own** to predict real framework behavior.
 
@@ -148,20 +95,20 @@ These tests are useful for reasoning about the space, but they were **not suffic
 
 The framework directories contain real imports and targeted tests for:
 
-* envelope/tool-call shape
-* unknown-field behavior
-* context/baggage propagation behavior
+- envelope/tool-call shape
+- unknown-field behavior
+- context/baggage propagation behavior
 
 Frameworks currently covered include:
 
-* AutoGen
-* Haystack
-* PydanticAI
-* LlamaIndex
-* CrewAI
-* Google ADK
+- AutoGen
+- Haystack
+- PydanticAI
+- LlamaIndex
+- CrewAI
+- Google ADK
 
-These integration tests were essential because several assumptions that looked reasonable in simulated tests did **not** hold in real frameworks. 
+These integration tests were essential because several assumptions that looked reasonable in simulated tests did **not** hold in real frameworks.
 
 ## What is demonstrated vs analyzed
 
@@ -171,16 +118,16 @@ This repo contains both runnable demos and broader research notes.
 
 These are primarily useful for showing visual trace effects and proving same-process or cross-library patterns:
 
-* `langgraph-demo/` — grouping and causality demonstrations in a controlled environment
-* `cross-library-demo/` — cross-library behavior and why grouping and causality diverge
+- `langgraph-demo/` — grouping and causality demonstrations in a controlled environment
+- `cross-library-demo/` — cross-library behavior and why grouping and causality diverge
 
 ### Framework evidence
 
 The `frameworks/` directory is the most important part of the repo for proposal review. It contains:
 
-* targeted tests
-* per-framework findings
-* evidence backing the proposal claims
+- targeted tests
+- per-framework findings
+- evidence backing the proposal claims
 
 ## Repo layout
 
@@ -265,5 +212,5 @@ Some names and patterns in the prototype reflect intermediate exploration rather
 
 ## Related drafts
 
-* `ISSUE_GROUPING.md`- generic grouping attributes for agentic workflow spans
-* `ISSUE_CAUSALITY.md` — causal span linking for LLM-triggered tool execution
+- `ISSUE_GROUPING.md`- generic grouping attributes for agentic workflow spans
+- `ISSUE_CAUSALITY.md` — causal span linking for LLM-triggered tool execution
