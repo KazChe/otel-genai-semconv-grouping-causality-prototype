@@ -9,11 +9,21 @@ area:gen-ai
 
 ### What's missing?
 
+> **Note:** This proposal introduces new attributes under the `gen_ai.group.*` namespace. This namespace does not currently exist in the GenAI semantic conventions. Existing `gen_ai.*` attributes (`gen_ai.operation.name`, `gen_ai.agent.id`, etc.) are not modified.
+
 GenAI semantic conventions lack a standard way to group related spans into logical units (iterations, tasks, skills, phases). When a user opens a trace from an agentic workflow, they see a flat or inconsistently structured list of spans — `chat`, `execute_tool`, `chat`, `execute_tool`, `chat` — with no reliable signal for which spans belong to the same logical unit.
 
 Debugging "why did my agent fail on attempt 3?" requires manually correlating spans by timestamp. Observability platforms cannot build generic iteration-level views or aggregations because the grouping signal is not in the data in any standardized form.
 
 Every time a new agentic pattern emerges (ReAct iterations, planning phases, tool-selection rounds), the only recourse today is to propose a new span type — leading to an N+1 span type problem. This is not specific to any one framework; it affects graph-based orchestrators, async event-driven runtimes, and multi-agent delegation patterns alike.
+
+**Why not solve this with existing operations?**
+
+The existing GenAI semconv already defines `execute_tool`, `invoke_agent`, and `invoke_workflow` as dedicated operations. This proposal does not replace them. Grouping is a separate concern — it adds correlation structure *around* existing operations rather than replacing them:
+
+- **Why not another wrapper span?** Wrapper spans represent real work with meaningful duration. Grouping is a tag, not a phase — "these spans belong to round 2" does not imply a span that starts and ends with round 2.
+- **Why isn't `invoke_workflow` enough?** Workflow spans capture workflow-level duration and hierarchy. They don't express overlapping membership — a span can be part of an iteration AND a skill AND an agent simultaneously.
+- **Why baggage rather than direct attributes?** Direct attributes require every instrumentation library to explicitly set grouping on every span. Baggage with `BaggageSpanProcessor` makes this transparent — grouping is set once and propagates automatically, even to spans created by libraries that know nothing about the convention.
 
 **Open concerns from #3575:**
 
@@ -43,7 +53,7 @@ A multi-round ReAct agent produces a flat span list with no signal for which spa
 
 ### Describe the solution you'd like
 
-W3C Baggage is the recommended transport for grouping context, but grouping continuity is only reliable if execution-boundary propagation is defined. Therefore, this proposal specifies both the grouping attributes and the propagation responsibilities across same-context, async/thread, and process/message boundaries.
+This proposal standardizes the grouping representation (namespaced attributes under `gen_ai.group.*`) and recommends W3C Baggage as the transport. It also provides interoperability guidance for maintaining grouping continuity across common execution boundaries found in LLM orchestration frameworks.
 
 #### 1. Attribute model: namespaced grouping keys (normative)
 
@@ -82,15 +92,17 @@ gen_ai.group.id   = "round-2"
 **After (namespaced keys — overlapping membership):**
 
 ```
-gen_ai.group.session.id      = abc123
-gen_ai.group.iteration.id    = round-2
+# NEW — proposed gen_ai.group.* attributes (used in prototype)
+gen_ai.group.id              = round-2
 gen_ai.group.iteration.type  = react
 gen_ai.group.skill.id        = rag-retrieval
 gen_ai.group.skill.type      = rag
+
+# EXISTING — already defined in GenAI semconv, shown for context
 gen_ai.agent.id              = main-agent
 ```
 
-A single span now carries all five dimensions simultaneously. When a dimension is not active (ex. no skill is being invoked), its keys are simply absent — no sentinel values needed.
+A single span now carries all grouping dimensions simultaneously alongside existing attributes. The new `gen_ai.group.*` keys are additive — they do not modify or conflict with existing `gen_ai.*` attributes. When a dimension is not active (e.g., no skill is being invoked), its keys are simply absent — no sentinel values needed.
 
 **Why this works with baggage specifically**
 
@@ -102,21 +114,47 @@ Namespaced keys are not just a naming convention — they are what makes W3C Bag
 
 Without namespaced keys, baggage would require encoding multiple groups into a single value (ex. `gen_ai.group.type=react_iteration,skill`) and parsing them back out — defeating the simplicity of the flat key-value model.
 
-**Queryability:** Backends can ask simple questions like `gen_ai.group.session.id = abc123` or `gen_ai.group.skill.type = rag` without parsing structured values.
+**Queryability:** Backends can ask simple questions like `gen_ai.group.id = round-2` or `gen_ai.group.skill.type = rag` without parsing structured values. This is what lets observability UIs build generic round-level, phase-level, or skill-level views without vendor-specific parsing logic — the grouping signal is in the attributes themselves, not encoded in a blob.
 
-These attribute names are **proposed, not existing** in the current GenAI semantic conventions. The prototype validates the underlying mechanism; the actual attribute names and namespace structure would be agreed upon as part of the spec discussion.
+**What this looks like in a trace:**
 
-#### 2. Transport: W3C Baggage + BaggageSpanProcessor (normative)
+```text
+invoke_agent react_agent
+│
+├─ chat gpt-4o                                  round-2, react, rag-retrieval
+│    gen_ai.group.id              = round-2
+│    gen_ai.group.iteration.type  = react
+│    gen_ai.group.skill.id        = rag-retrieval
+│    gen_ai.group.skill.type      = rag
+│    gen_ai.agent.id              = main-agent        ← existing attribute
+│
+├─ execute_tool search_docs                      round-2, react, rag-retrieval
+│    gen_ai.group.id              = round-2
+│    gen_ai.group.iteration.type  = react
+│    gen_ai.group.skill.id        = rag-retrieval
+│    gen_ai.group.skill.type      = rag
+│
+├─ chat gpt-4o                                  round-3, react (no skill)
+│    gen_ai.group.id              = round-3
+│    gen_ai.group.iteration.type  = react
+│    ← no gen_ai.group.skill.* keys — skill dimension absent
+```
+
+Both `chat` and `execute_tool` in round-2 carry the same iteration AND skill dimensions — set once via baggage, copied to both spans automatically by `BaggageSpanProcessor`. Round-3's `chat` carries the iteration but no skill — the skill keys are simply absent. A backend can filter `gen_ai.group.skill.id = rag-retrieval` to see all RAG-related spans across rounds, or `gen_ai.group.id = round-2` to see everything in round 2.
+
+These attribute names are **proposed, not existing** in the current GenAI semantic conventions. The attribute names used here (`gen_ai.group.id`, `gen_ai.group.iteration.type`, `gen_ai.group.skill.id`, `gen_ai.group.skill.type`) match the prototype's test suite and demo code. The actual names and namespace structure would be agreed upon as part of the spec discussion.
+
+#### 2. Recommended transport: W3C Baggage + BaggageSpanProcessor
 
 Grouping attributes are carried in [W3C Baggage](https://www.w3.org/TR/baggage/) and the official [`opentelemetry-processor-baggage`](https://pypi.org/project/opentelemetry-processor-baggage/) package copies them to span attributes automatically. This reduces instrumentation burden: span creators do not need to call `span.set_attribute()` for grouping attributes manually on every span if a `BaggageSpanProcessor` or equivalent copier is configured.
 
 Some environments may still choose direct attribute setting as a fallback or compatibility path.
 
-#### 3. Propagation contract by boundary type (strong guidance)
+#### 3. Interoperability guidance: grouping continuity across execution boundaries
 
-Baggage transport alone is not enough. Grouping continuity depends on OTel context propagation across the execution boundaries that LLM orchestration frameworks introduce.
+Baggage transport alone does not guarantee grouping continuity. Whether baggage survives depends on the execution boundaries that LLM orchestration frameworks introduce. Integration testing across 6 frameworks produced the following observed behavior:
 
-**Key finding: baggage propagation works better than expected.** Integration testing across 6 frameworks found that baggage propagates automatically for most in-process sync tool execution. The original research classification of "requires manual propagation" was too conservative for the sync case.
+**Observed propagation behavior in tested implementations:**
 
 | Propagation state | Behavior | Frameworks (verified by integration tests) |
 |-------------------|----------|---------------------------------------------|
@@ -126,18 +164,18 @@ Baggage transport alone is not enough. Grouping continuity depends on OTel conte
 | **Breaks** | Baggage completely lost | AutoGen `GrpcWorkerAgentRuntime` (cross-process) |
 | **Not yet tested** | Classification from research only | Semantic Kernel, DSPy, Instructor, ControlFlow |
 
-The async gap is real but narrower than expected. Haystack solved it by using `contextvars.copy_context()` in its async pipeline executor — proving the pattern is achievable. Frameworks that lose baggage in async paths can adopt the same approach.
+This is implementation evidence that informs guidance, not a semantic requirement. The key insight is that propagation behavior depends on boundary type and sometimes runtime path — it is not simply "works" or "doesn't work."
 
-The convention should define propagation responsibilities:
+Based on this evidence, the convention should include the following interoperability guidance:
 
 **In-process, same execution context:**
-Baggage is the recommended carrier for grouping attributes. Baggage propagation works automatically for most sync tool execution paths — no additional action needed.
+Baggage is the recommended carrier for grouping attributes. Baggage propagation generally works automatically for many sync tool execution paths tested here — no additional action needed in those cases.
 
 **Async or thread dispatch boundaries:**
 Instrumentations and frameworks that dispatch execution across tasks or threads **should preserve the active context** into the dispatched work using `contextvars.copy_context()` (as Haystack does). If the runtime does not do this automatically, instrumentation authors **should manually capture and re-attach context** (e.g., `context.get_current()` before dispatch, `context.attach()` on receiver).
 
 **Process / network / agent-runtime boundaries:**
-Grouping context **must be serialized explicitly** into message metadata or protocol headers if continuity across the boundary is desired. Python `contextvars` do not survive process boundaries.
+Grouping context does not survive process boundaries via Python `contextvars`. If continuity across process or network boundaries is desired, grouping attributes should be serialized into message metadata or protocol headers. This is an operational consequence of the transport choice, not a semantic requirement.
 
 #### 4. Relationship to dedicated operations
 
