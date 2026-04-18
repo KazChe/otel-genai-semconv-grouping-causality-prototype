@@ -135,7 +135,6 @@ The `frameworks/` directory is the most important part of the repo for proposal 
 langgraph-demo/        # Same-process demonstration environment + grouping tests
 cross-library-demo/    # Cross-library demonstration environment + causality tests
 frameworks/            # Integration tests and findings by framework
-research-notes.md      # Consolidated research notes and interpretation
 ISSUE_GROUPING.md      # Current grouping proposal draft
 ISSUE_CAUSALITY.md     # Current causality proposal draft
 ```
@@ -146,63 +145,10 @@ If you are reviewing the proposal direction, start here:
 
 1. `ISSUE_GROUPING.md`
 2. `ISSUE_CAUSALITY.md`
-3. `research-notes.md`
-4. `frameworks/*/DISCOVERIES.md`
-5. the corresponding `test_envelope_shape.py` and `test_context_propagation.py` files
+3. `frameworks/*/DISCOVERIES.md`
+4. the corresponding `test_envelope_shape.py` and `test_context_propagation.py` files
 
 If you want to run the demos, then use the demo folders afterward.
-
-## Running the tests
-
-Tests use `InMemorySpanExporter` — no Docker needed.
-
-### Simulated tests
-
-```bash
-# Causality — payload traceparent resilience (20 tests)
-cd cross-library-demo
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python -m pytest test_payload_traceparent.py -v
-
-# Grouping — overlapping membership + baggage propagation
-cd langgraph-demo
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python -m pytest test_overlapping_groups.py -v
-```
-
-### Framework integration tests
-
-Run these selectively by framework. Each has its own venv to avoid dependency conflicts:
-
-```bash
-cd frameworks/haystack
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python -m pytest -v -s
-
-# Same pattern for: autogen, pydantic-ai, llamaindex, crewai, google-adk
-```
-
-## Running the demos
-
-Demos send traces to an OTLP collector for visualization. Start infrastructure first:
-
-```bash
-docker compose up -d
-
-# Run the current demo (grouping + causality + delegation + skill transitions)
-cd langgraph-demo
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python agent_overlapping_groups.py
-```
-
-Aspire dashboard: http://localhost:18888
-Jaeger UI: http://localhost:16686
-
-The demo prints a self-documenting span summary to stdout — you can see the attributes without needing a trace viewer.
 
 ## Important caveat
 
