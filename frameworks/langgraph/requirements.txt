@@ -7,3 +7,4 @@ opentelemetry-processor-baggage>=0.61b0
 openinference-instrumentation-langchain
 # test dependencies
 pytest>=7.0.0
+pytest-asyncio>=0.23.0
