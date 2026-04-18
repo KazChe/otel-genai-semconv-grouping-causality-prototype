@@ -1,13 +1,3 @@
-Yes — I would redo the README pretty aggressively.
-
-Right now the README still carries too much of the **old thesis** and prototype-era framing, including:
-
-* grouping as just `gen_ai.group.id`
-* causality as payload injection into tool-call metadata
-* a "before/after" story that is stronger than what the current proposal now claims as semconv scope 
-
-Since your proposal has now split into **two issues** — grouping and causality — the README should stop sounding like "this repo proves the final semconv" and instead sound like:
-
 **This repo is the research and prototype evidence base for two related GenAI semconv proposals.**
 
 That framing matches where you are now much better. Your current issue drafts are clearly split into:
