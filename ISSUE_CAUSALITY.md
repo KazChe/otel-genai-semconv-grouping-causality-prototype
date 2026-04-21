@@ -166,6 +166,16 @@ Causal linking and grouping are complementary layers of the same contract:
 - **Causality** (sidecar traceparent) handles directed relationships: "this tool execution was triggered by that LLM call"
 - Together they provide both structural and temporal relationships in the trace tree
 
+#### Precedent in OTel semantic conventions
+
+This proposal follows established patterns in OTel semconv for recommending propagation mechanisms without over-specifying framework internals:
+
+- **[MCP semconv][mcp]** — the closest GenAI precedent. MCP does not define a standard trace-context mechanism; it **recommends propagating trace context in `params._meta`** and says server instrumentation should use the extracted context as the parent. Our causality proposal follows the same pattern: recommend a carrier location (framework-native sidecar), define the extract contract (use as parent context), leave storage details to implementers.
+- **[Messaging semconv][messaging]** — defines the intent of a "message creation context," says producers should attach it and consumers should extract it, and discusses parent-vs-link behavior for consumer spans. Explicitly does **not** standardize the attach/extract mechanism itself. Same scope as our proposal.
+
+[mcp]: https://github.com/open-telemetry/semantic-conventions/blob/main/docs/gen-ai/mcp.md
+[messaging]: https://github.com/open-telemetry/semantic-conventions/blob/main/docs/messaging/messaging-spans.md
+
 #### Prototype evidence
 
 Prototype repo: https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype
