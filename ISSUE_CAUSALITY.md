@@ -46,7 +46,7 @@ Causal linking is distinct from grouping. Grouping says "these spans belong to t
 
 **Why not span links?**
 
-Span links are valid OTel constructs and can be useful for expressing association between spans. However, they do not by themselves recover the parent-child causal tree this proposal is trying to standardize. The goal here is not merely to associate spans — it is to recover the causal execution tree in a way that backends can render naturally as nested parent-child hierarchies. Span links would require every backend to implement custom rendering logic to reconstruct causality from link metadata, whereas parent-child relationships are already the native hierarchy model in most trace viewer.
+Span links are valid OTel constructs and can be useful for expressing association between spans. However, they do not by themselves recover the parent-child causal tree this proposal is trying to standardize. The goal here is not merely to associate spans — it is to recover the causal execution tree in a way that backends can render naturally as nested parent-child hierarchies. Span links would require every backend to implement custom rendering logic to reconstruct causality from link metadata, whereas parent-child relationships are already the native hierarchy model in most trace viewers.
 
 **What this looks like in a trace:**
 
@@ -70,11 +70,26 @@ With sidecar propagation (causal tree):
 
 ### Describe the solution you'd like
 
-Payload-level `traceparent` propagation via framework-native sidecar mechanisms — the same W3C Trace Context standard used for HTTP, applied to LLM tool call envelopes through each framework's existing extension points rather than through tool call arguments.
+Use of standard W3C Trace Context to recover causal parent-child relationships between LLM inference and tool execution spans.
+This proposal does not introduce a new propagation format. Instead, it applies the existing W3C Trace Context model to LLM tool call flows so that an `execute_tool` span can recover the context of the `chat` span that triggered it.
+
+The recommended approach is to carry that context through framework-native sidecar mechanisms rather than through tool call arguments. The carrier itself is a simple `dict[str, str]` containing the `traceparent` header, created by standard OTel `propagate.inject()` and read back by `propagate.extract()`. Integration testing showed that the viability of the proposal depends less on the carrier format and more on where that carrier is placed within real framework data flows.
+
+**Patterns observed across frameworks**
+
+Integration testing across 7 frameworks (6 third-party + LangGraph as a same-process demonstrator) revealed three patterns:
+
+1. **Carrier placement determines survival.** The carrier format is durable across serialization paths. What breaks is where it is placed. Tool call arguments are validated, filtered, or rejected by most frameworks before reaching the tool function.
+
+2. **Frameworks fall into two categories:**
+   - **Native sidecar** (Haystack, Google ADK, PydanticAI, LangGraph): provide an extension point that can carry context alongside tool execution
+   - **No sidecar / out-of-band correlation** (AutoGen, LlamaIndex, CrewAI): no native extension point, require external correlation
+
+3. **Schema does not predict runtime behavior.** Two frameworks can declare `additionalProperties: false` in their tool schemas and enforce it in opposite ways at runtime: one silently strips, the other hard rejects. Classification requires integration testing, not schema inspection.
 
 #### 1. Key finding: carrier MUST NOT go in tool call arguments
 
-Integration testing across 6 major frameworks revealed that **injecting the carrier into tool call arguments fails in 5 of 6 frameworks**. The carrier is either silently stripped or hard rejected before reaching the tool function:
+The following table shows the specific failure mode for each of the 6 third-party frameworks tested:
 
 | Framework  | What happens to extras in args | Mechanism                                           | Classification |
 | ---------- | ------------------------------ | --------------------------------------------------- | -------------- |
@@ -87,7 +102,7 @@ Integration testing across 6 major frameworks revealed that **injecting the carr
 
 The silent strip is the most dangerous failure mode — the application continues to run but traces are silently disconnected. Three of six frameworks exhibit this behavior. AutoGen and PydanticAI both declare `additionalProperties: false` in their tool schemas, but the runtime enforcement is opposite — AutoGen silently strips while PydanticAI raises `ValidationError`. The schema alone does not predict runtime behavior.
 
-This means the original `tool_call["_otel"] = carrier` approach from the prototype is not viable as a general-purpose convention. The carrier must travel through a different channel.
+This means injecting trace context directly into tool call arguments (e.g., `tool_call["_otel"] = {"traceparent": "..."}`) is not viable as a general-purpose convention.
 
 #### 2. Recommended mechanism: sidecar propagation
 
@@ -156,5 +171,5 @@ Prototype repo: https://github.com/KazChe/otel-genai-semconv-grouping-causality-
 
 - **Simulated tests:** 20 automated tests mapping the compatibility matrix — serialization resilience, failure modes, mitigations, and framework-specific envelope patterns ([`cross-library-demo/test_payload_traceparent.py`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/blob/main/cross-library-demo/test_payload_traceparent.py))
 - **Integration tests:** Real framework imports verifying actual envelope shapes and context propagation across 6 frameworks — AutoGen, Haystack, PydanticAI, LlamaIndex, CrewAI, Google ADK ([`frameworks/`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/tree/main/frameworks))
-- **Runnable demos:** Same-process causality (LangGraph), cross-library causality, baseline comparison (flat siblings vs. causal tree)
+- **Runnable demo:** Same-process causality demonstration via LangGraph ([`frameworks/langgraph/`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/tree/main/frameworks/langgraph))
 - **Key discovery:** simulated tests alone would have given ~25% accuracy on envelope behavior — integration tests were essential for correct classification

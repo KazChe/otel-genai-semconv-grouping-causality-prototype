@@ -11,7 +11,7 @@ area:gen-ai
 
 > **Note:** This proposal introduces new attributes under the `gen_ai.group.*` namespace. This namespace does not currently exist in the GenAI semantic conventions. Existing `gen_ai.*` attributes (`gen_ai.operation.name`, `gen_ai.agent.id`, etc.) are not modified.
 
-GenAI semantic conventions lack a standard way to group related spans into logical units (iterations, tasks, skills, phases). When a user opens a trace from an agentic workflow, they see a flat or inconsistently structured list of spans — `chat`, `execute_tool`, `chat`, `execute_tool`, `chat` — with no reliable signal for which spans belong to the same logical unit.
+GenAI semantic conventions lack a standard way to group related spans into logical units (iterations, tasks, skills, phases). When a user opens a trace from an agentic workflow, they see a flat or inconsistently structured list of spans, `chat`, `execute_tool`, `chat`, `execute_tool`, `chat`, with no reliable signal for which spans belong to the same logical unit.
 
 Debugging "why did my agent fail on attempt 3?" requires manually correlating spans by timestamp. Observability platforms cannot build generic iteration-level views or aggregations because the grouping signal is not in the data in any standardized form.
 
@@ -102,15 +102,15 @@ gen_ai.group.skill.type      = rag
 gen_ai.agent.id              = main-agent
 ```
 
-A single span now carries all grouping dimensions simultaneously alongside existing attributes. The new `gen_ai.group.*` keys are additive — they do not modify or conflict with existing `gen_ai.*` attributes. When a dimension is not active (e.g., no skill is being invoked), its keys are simply absent — no sentinel values needed.
+A single span now carries all grouping dimensions simultaneously alongside existing attributes. The new `gen_ai.group.*` keys are additive and do not modify or conflict with existing `gen_ai.*` attributes. When a dimension does not apply, its keys are simply not set rather than being set to a placeholder like `"none"` or `"N/A"`.
 
 **Why this works with baggage specifically**
 
-Namespaced keys are not just a naming convention — they are what makes W3C Baggage viable as the transport for grouping. W3C Baggage is a flat key-value store: each `baggage.set_baggage(key, value)` call adds an independent entry. A `BaggageSpanProcessor` copies _all_ baggage entries to span attributes automatically. This means:
+Namespaced keys are not just a naming convention, they are what makes W3C Baggage viable as the transport for grouping. W3C Baggage is a flat key-value store: each `baggage.set_baggage(key, value)` call adds an independent entry. A `BaggageSpanProcessor` copies _all_ baggage entries to span attributes automatically. This means:
 
-- **No instrumentation burden** — span creators do not need to know about grouping at all. If baggage is set in the active context, the processor handles it.
-- **Overlapping membership is free** — adding a new group dimension is just another `set_baggage()` call. No schema changes, no new span types.
-- **Cross-library transparency** — if two instrumentation libraries share the same `TracerProvider` with a `BaggageSpanProcessor`, both libraries' spans carry grouping attributes without either library knowing about the convention.
+- **No instrumentation burden**: span creators do not need to know about grouping at all. If baggage is set in the active context, the processor handles it.
+- **Overlapping membership is free**: adding a new group dimension is just another `set_baggage()` call. No schema changes, no new span types.
+- **Cross-library transparency**: if two instrumentation libraries share the same `TracerProvider` with a `BaggageSpanProcessor`, both libraries' spans carry grouping attributes without either library knowing about the convention.
 
 Without namespaced keys, baggage would require encoding multiple groups into a single value (ex. `gen_ai.group.type=react_iteration,skill`) and parsing them back out — defeating the simplicity of the flat key-value model.
 
@@ -140,7 +140,7 @@ invoke_agent react_agent
 │    ← no gen_ai.group.skill.* keys — skill dimension absent
 ```
 
-Both `chat` and `execute_tool` in round-2 carry the same iteration AND skill dimensions — set once via baggage, copied to both spans automatically by `BaggageSpanProcessor`. Round-3's `chat` carries the iteration but no skill — the skill keys are simply absent. A backend can filter `gen_ai.group.skill.id = rag-retrieval` to see all RAG-related spans across rounds, or `gen_ai.group.id = round-2` to see everything in round 2.
+Both `chat` and `execute_tool` in round-2 carry the same iteration AND skill dimensions set once via baggage, copied to both spans automatically by `BaggageSpanProcessor`. Round-3's `chat` carries the iteration but no skill — the skill keys are simply absent. A backend can filter `gen_ai.group.skill.id = rag-retrieval` to see all RAG-related spans across rounds, or `gen_ai.group.id = round-2` to see everything in round 2.
 
 These attribute names are **proposed, not existing** in the current GenAI semantic conventions. The attribute names used here (`gen_ai.group.id`, `gen_ai.group.iteration.type`, `gen_ai.group.skill.id`, `gen_ai.group.skill.type`) match the prototype's test suite and demo code. The actual names and namespace structure would be agreed upon as part of the spec discussion.
 
