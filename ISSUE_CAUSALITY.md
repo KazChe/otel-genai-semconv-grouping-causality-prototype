@@ -1,7 +1,7 @@
 # [gen-ai] Add causal span linking for LLM-triggered tool execution
 
 Split from [open-telemetry/semantic-conventions#3575](https://github.com/open-telemetry/semantic-conventions/issues/3575).
-Companion issue: Generic Grouping Attributes for GenAI Spans (ISSUE_GROUPING.md)
+Companion issue: Generic Grouping Attributes for GenAI Spans (ISSUE_GROUPING.md) <!-- TODO: replace with open-telemetry/semantic-conventions#NNNN once grouping issue is filed -->
 
 ### Area(s)
 
@@ -80,11 +80,11 @@ The recommended approach is to carry that context through framework-native **sid
 
 Integration testing across 7 frameworks (6 third-party + LangGraph as a same-process demonstrator) revealed three patterns:
 
-1. **Carrier placement determines survival.** The carrier format is durable across serialization paths. What breaks is where it is placed. Tool call arguments are validated, filtered, or rejected by most frameworks before reaching the tool function.
+1. **Carrier placement determines survival.** The carrier format is durable across serialization paths. What breaks is the channel through which it travels. Tool call arguments are validated, filtered, or rejected by most frameworks before reaching the tool function.
 
 2. **Frameworks fall into two categories:**
    - **Native sidecar** (Haystack, Google ADK, PydanticAI, LangGraph): provide an extension point that can carry context alongside tool execution
-   - **No sidecar / out-of-band correlation** (AutoGen, LlamaIndex, CrewAI): no native extension point, require external correlation
+   - **No sidecar / out-of-band correlation** (AutoGen, LlamaIndex, CrewAI): no native extension point, carrier must travel through a side channel, keyed by tool call ID. The instrumentor must maintain its own mapping from tool call ID to carrier
 
 3. **Schema does not predict runtime behavior.** Two frameworks can declare `additionalProperties: false` in their tool schemas and enforce it in opposite ways at runtime: one silently strips, the other hard rejects. Classification requires integration testing, not schema inspection.
 
@@ -101,9 +101,9 @@ The following table shows the specific failure mode for each of the 6 third-part
 | PydanticAI | Crashes                        | `PluggableSchemaValidator` raises `extra_forbidden` | Hard reject    |
 | LlamaIndex | Crashes                        | Python function signature rejects unknown kwargs    | Hard reject    |
 
-The silent strip is the most dangerous failure mode — the application continues to run but traces are silently disconnected. Three of six frameworks exhibit this behavior. AutoGen and PydanticAI both declare `additionalProperties: false` in their tool schemas, but the runtime enforcement is opposite — AutoGen silently strips while PydanticAI raises `ValidationError`. The schema alone does not predict runtime behavior.
+The silent strip is the most dangerous failure mode, the application continues to run but traces are silently disconnected. Three of six frameworks exhibit this behavior. AutoGen and PydanticAI both declare `additionalProperties: false` in their tool schemas, but the runtime enforcement is opposite, AutoGen silently strips while PydanticAI raises `ValidationError`. The schema alone does not predict runtime behavior.
 
-This means injecting trace context directly into tool call arguments (e.g., `tool_call["_otel"] = {"traceparent": "..."}`) is not viable as a general-purpose convention.
+This means injecting trace context directly into tool call arguments (e.g. `tool_call["_otel"] = {"traceparent": "..."}`) is not viable as a general-purpose convention.
 
 #### 2. Recommended mechanism: sidecar propagation
 
@@ -130,19 +130,19 @@ Integration testing found that 4 of 6 frameworks already have a native sidecar m
 | LlamaIndex      | None found               | Out-of-band correlation required                                                                                     |
 | CrewAI          | None found               | Out-of-band correlation required                                                                                     |
 
-**Sidecar vs Out-of-Band — two different integration models:**
+**Sidecar vs Out-of-Band - two different integration models:**
 
-**Sidecar propagation** means the carrier rides inside a field that the framework already provides and manages as part of its normal data flow. The framework carries it for you — the instrumentor just needs to know which field to use. This is the preferred approach because it requires no custom infrastructure and survives whatever serialization the framework applies to its own objects.
+**Sidecar propagation** means the carrier rides inside a field that the framework already provides and manages as part of its normal data flow. The framework does the transport work; the instrumentor just needs to know which field to use. This is the preferred approach because it requires no custom infrastructure and survives whatever serialization the framework applies to its own objects.
 
-**Out-of-Band Correlation** is the fallback for frameworks that don't provide a native sidecar (AutoGen, LlamaIndex, CrewAI). It means the carrier doesn't travel inside any framework object at all. Instead, the instrumentor stores the carrier in a separate data structure — typically a thread-local or async-local dict — keyed by the tool call's correlation ID. At tool execution time, the executor retrieves the carrier from this external store using the ID. The framework never sees or touches the carrier.
+**Out-of-Band Correlation** is the fallback for frameworks that don't provide a native sidecar (AutoGen, LlamaIndex, CrewAI). It means the carrier doesn't travel inside any framework object at all. Instead, the instrumentor stores the carrier in a separate data structure, typically a thread-local or async-local dict that is keyed by the tool call's correlation ID. At tool execution time, the executor retrieves the carrier from this external store using the ID. The framework never sees or touches the carrier.
 
-This works, but it's hand-rolled plumbing: every instrumentor for every framework without a native sidecar must independently implement the storage, keying, lifecycle management, and cleanup. Without a convention, each implementation reinvents this mapping differently — which is exactly the kind of fragmentation that a semantic convention should prevent.
+This works, but it's hand-rolled plumbing: every instrumentor for every framework without a native sidecar must independently implement the storage, keying, lifecycle management, and cleanup. Without a convention, each implementation reinvents this mapping differently which is exactly the kind of fragmentation that a semantic convention should prevent.
 
 The convention should:
 
 - **Recommend sidecar propagation** as the primary approach for frameworks that provide an extension point
 - **Document out-of-band correlation** as a fallback interoperability pattern for frameworks without native sidecars, encouraging convergence on stable correlation inputs such as tool call IDs
-- **Encourage framework authors** to expose a metadata, context, or extra field over time — pointing to Haystack's `ToolCall.extra` and Google ADK's `ToolContext` as successful examples
+- **Encourage framework authors** to expose a metadata, context, or extra field over time, pointing to Haystack's `ToolCall.extra` and Google ADK's `ToolContext` as successful examples
 
 #### 4. Serialization resilience (informational)
 
@@ -158,7 +158,7 @@ While the carrier must not go in tool call arguments, the carrier format itself 
 | Schema sanitization (known-fields filter)                         | No — silent strip                                                                                                                |
 | LangGraph checkpoint serde (MessagePack via `JsonPlusSerializer`) | Yes — `dict[str, str]` round-trips through MessagePack ext codes; loss occurs at Pydantic validation layer, not checkpoint layer |
 
-#### 5. Relationship to grouping
+#### 5. Relationship to grouping <!-- TODO: link to grouping issue #NNNN once filed -->
 
 Causal linking and grouping are complementary layers of the same contract:
 
@@ -171,6 +171,5 @@ Causal linking and grouping are complementary layers of the same contract:
 Prototype repo: https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype
 
 - **Simulated tests:** 20 automated tests mapping the compatibility matrix — serialization resilience, failure modes, mitigations, and framework-specific envelope patterns ([`cross-library-demo/test_payload_traceparent.py`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/blob/main/cross-library-demo/test_payload_traceparent.py))
-- **Integration tests:** Real framework imports verifying actual envelope shapes and context propagation across 6 frameworks — AutoGen, Haystack, PydanticAI, LlamaIndex, CrewAI, Google ADK ([`frameworks/`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/tree/main/frameworks))
+- **Integration tests:** Real framework imports verifying actual envelope shapes and context propagation across 6 frameworks-  AutoGen, Haystack, PydanticAI, LlamaIndex, CrewAI, Google ADK ([`frameworks/`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/tree/main/frameworks))
 - **Runnable demo:** Same-process causality demonstration via LangGraph ([`frameworks/langgraph/`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/tree/main/frameworks/langgraph))
-- **Key discovery:** simulated tests alone would have given ~25% accuracy on envelope behavior — integration tests were essential for correct classification
