@@ -48,6 +48,12 @@ Causal linking is distinct from grouping. Grouping says "these spans belong to t
 
 Span links are valid OTel constructs and can be useful for expressing association between spans. However, they do not by themselves recover the parent-child causal tree this proposal is trying to standardize. The goal here is not merely to associate spans — it is to recover the causal execution tree in a way that backends can render naturally as nested parent-child hierarchies. Span links would require every backend to implement custom rendering logic to reconstruct causality from link metadata, whereas parent-child relationships are already the native hierarchy model in most trace viewers.
 
+
+### Describe the solution you'd like
+
+Use of standard W3C Trace Context to recover causal parent-child relationships between LLM inference and tool execution spans.
+This proposal does not introduce a new propagation format. Instead, it applies the existing W3C Trace Context model to LLM tool call flows so that an `execute_tool` span can recover the context of the `chat` span that triggered it.
+
 **What this looks like in a trace:**
 
 ```text
@@ -68,12 +74,7 @@ With sidecar propagation (causal tree):
   └─ chat gpt-4o               (round 3, no tool call)
 ```
 
-### Describe the solution you'd like
-
-Use of standard W3C Trace Context to recover causal parent-child relationships between LLM inference and tool execution spans.
-This proposal does not introduce a new propagation format. Instead, it applies the existing W3C Trace Context model to LLM tool call flows so that an `execute_tool` span can recover the context of the `chat` span that triggered it.
-
-The recommended approach is to carry that context through framework-native sidecar mechanisms rather than through tool call arguments. The carrier itself is a simple `dict[str, str]` containing the `traceparent` header, created by standard OTel `propagate.inject()` and read back by `propagate.extract()`. Integration testing showed that the viability of the proposal depends less on the carrier format and more on where that carrier is placed within real framework data flows.
+The recommended approach is to carry that context through framework-native **sidecar mechanisms**, fields that ride alongside the tool call through the framework's own data flow, rather than inside the tool call arguments. The carrier itself is a simple `dict[str, str]` containing the `traceparent` header, created by standard OTel `propagate.inject()` and read back by `propagate.extract()`. Integration testing showed that the viability of the proposal depends less on the carrier format and more on where that carrier is placed within real framework data flows.
 
 **Patterns observed across frameworks**
 
