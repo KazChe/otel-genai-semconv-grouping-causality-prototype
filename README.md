@@ -99,7 +99,7 @@ The framework directories contain real imports and targeted tests for:
 - unknown-field behavior
 - context/baggage propagation behavior
 
-Frameworks currently covered include:
+Frameworks currently covered:
 
 - AutoGen
 - Haystack
@@ -107,6 +107,9 @@ Frameworks currently covered include:
 - LlamaIndex
 - CrewAI
 - Google ADK
+- LangGraph (included as a same-process demonstrator, not part of the third-party tool-envelope matrix)
+
+A separate `frameworks/otel-only/` directory contains pure OTel mechanism tests (baggage, contextvars, asyncio, threads) that do not import any framework. These are the shared evidence base for the grouping proposal.
 
 These integration tests were essential because several assumptions that looked reasonable in simulated tests did **not** hold in real frameworks.
 
@@ -116,10 +119,10 @@ This repo contains both runnable demos and broader research notes.
 
 ### Runnable demos
 
-These are primarily useful for showing visual trace effects and proving same-process or cross-library patterns:
+These are primarily useful for showing visual trace effects and proving same-process patterns:
 
-- `langgraph-demo/` — grouping and causality demonstrations in a controlled environment
-- `cross-library-demo/` — cross-library behavior and why grouping and causality diverge
+- `frameworks/langgraph/` — same-process grouping and causality demonstrations in a controlled environment
+- `cross-library-demo/` — serialization and envelope simulation tests for the causality carrier (JSON, deepcopy, Pydantic, MessagePack, and framework envelope patterns)
 
 ### Framework evidence
 
@@ -132,9 +135,16 @@ The `frameworks/` directory is the most important part of the repo for proposal 
 ## Repo layout
 
 ```text
-langgraph-demo/        # Same-process demonstration environment + grouping tests
-cross-library-demo/    # Cross-library demonstration environment + causality tests
-frameworks/            # Integration tests and findings by framework
+frameworks/
+  autogen/             # AutoGen integration tests + findings
+  crewai/              # CrewAI integration tests + findings
+  google-adk/          # Google ADK integration tests + findings
+  haystack/            # Haystack integration tests + findings
+  langgraph/           # Same-process demonstrator for both proposals
+  llamaindex/          # LlamaIndex integration tests + findings
+  otel-only/           # Pure OTel mechanism tests (no framework imports)
+  pydantic-ai/         # PydanticAI integration tests + findings
+cross-library-demo/    # Serialization tests for the causality carrier
 ISSUE_GROUPING.md      # Current grouping proposal draft
 ISSUE_CAUSALITY.md     # Current causality proposal draft
 ```
