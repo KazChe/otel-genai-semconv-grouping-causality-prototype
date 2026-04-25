@@ -1,20 +1,11 @@
 # [gen-ai] Add generic grouping attributes for agentic workflow spans
 
 Split from [open-telemetry/semantic-conventions#3575](https://github.com/open-telemetry/semantic-conventions/issues/3575).
-Companion issue: Causal Span Linking for GenAI Tool Calls (ISSUE_CAUSALITY.md) <!-- TODO: replace with open-telemetry/semantic-conventions#NNNN once causality issue is filed -->
-
-### Area(s)
+Companion issue: [Causal Span Linking for GenAI Tool Calls](https://github.com/open-telemetry/semantic-conventions/issues/3662) 
 
 area:gen-ai
 
 ### What's missing?
-
-> **Note:** This proposal introduces a new `gen_ai.group.*` attribute namespace with the following keys:
->
-> - `gen_ai.group.id`: identifier for a specific logical unit of work, such as a single ReAct round (e.g. `round-2`)
-> - `gen_ai.group.iteration.type`: the iteration pattern being executed (e.g. `react`, `plan_execute`)
-> - `gen_ai.group.skill.id`: identifier for the active skill invoked within the group (e.g. `rag-retrieval`, `code-generation`)
-> - `gen_ai.group.skill.type`: the category of the active skill (e.g. `rag`, `code_gen`, `compute`)
 
 GenAI semantic conventions lack a standard way to group related spans into logical units (iterations, tasks, skills, phases). When a user opens a trace from an agentic workflow, they see a flat or inconsistently structured list of spans, `chat`, `execute_tool`, `chat`, `execute_tool`, `chat`, with no reliable signal for which spans belong to the same logical unit.
 
@@ -23,6 +14,13 @@ Debugging "why did my agent fail on attempt 3?" requires manually correlating sp
 Every time a new agentic pattern emerges (ReAct iterations, planning phases, tool-selection rounds), the only recourse today is to propose a new span type, leading to an N+1 span type problem. This is not specific to any one framework; it affects graph-based orchestrators, async event-driven runtimes, and multi-agent delegation patterns alike.
 
 ### Describe the solution you'd like
+
+> **Note:** This proposal introduces a new `gen_ai.group.*` attribute namespace with the following keys:
+>
+> - `gen_ai.group.id`: identifier for a specific logical unit of work, such as a single ReAct round (e.g. `round-2`)
+> - `gen_ai.group.iteration.type`: the iteration pattern being executed (e.g. `react`, `plan_execute`)
+> - `gen_ai.group.skill.id`: identifier for the active skill invoked within the group (e.g. `rag-retrieval`, `code-generation`)
+> - `gen_ai.group.skill.type`: the category of the active skill (e.g. `rag`, `code_gen`, `compute`)
 
 This proposal addresses feedback from @Cirilla-zmh, @Krishnachaitanyakc, and @lmolkova on #3575 around overlapping membership, instrumentation complexity, relationship to dedicated operations, and user-facing value.
 

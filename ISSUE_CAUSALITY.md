@@ -1,7 +1,7 @@
 # [gen-ai] Add causal span linking for LLM-triggered tool execution
 
 Split from [open-telemetry/semantic-conventions#3575](https://github.com/open-telemetry/semantic-conventions/issues/3575).
-Companion issue: Generic Grouping Attributes for GenAI Spans (ISSUE_GROUPING.md) <!-- TODO: replace with open-telemetry/semantic-conventions#NNNN once grouping issue is filed -->
+Companion issue: [Generic Grouping Attributes for GenAI Spans](https://github.com/open-telemetry/semantic-conventions/issues/3661)
 
 ### Area(s)
 
@@ -9,7 +9,7 @@ area:gen-ai
 
 ### What's missing?
 
-GenAI semantic conventions have no standard way to express that a specific `execute_tool` span was triggered by a specific LLM inference span. When an LLM returns tool calls, the subsequent `execute_tool` span appears as a sibling of the `chat` span — not as a child. There is no signal in the trace tree that says "this tool execution was triggered by that LLM call."
+GenAI semantic conventions have no standard way to express that a specific `execute_tool` span was triggered by a specific LLM inference span. When an LLM returns tool calls, the subsequent `execute_tool` span appears as a sibling of the `chat` span, not as a child. There is no signal in the trace tree that says "this tool execution was triggered by that LLM call."
 
 This matters because debugging agentic workflows requires understanding causality: which LLM decision led to which tool invocation, and in what order. Without causal links, users must reconstruct the chain manually by matching timestamps and tool names across a flat span list.
 
@@ -47,7 +47,6 @@ Causal linking is distinct from grouping. Grouping says "these spans belong to t
 **Why not span links?**
 
 Span links are valid OTel constructs and can be useful for expressing association between spans. However, they do not by themselves recover the parent-child causal tree this proposal is trying to standardize. The goal here is not merely to associate spans — it is to recover the causal execution tree in a way that backends can render naturally as nested parent-child hierarchies. Span links would require every backend to implement custom rendering logic to reconstruct causality from link metadata, whereas parent-child relationships are already the native hierarchy model in most trace viewers.
-
 
 ### Describe the solution you'd like
 
@@ -158,7 +157,7 @@ While the carrier must not go in tool call arguments, the carrier format itself 
 | Schema sanitization (known-fields filter)                         | No — silent strip                                                                                                                |
 | LangGraph checkpoint serde (MessagePack via `JsonPlusSerializer`) | Yes — `dict[str, str]` round-trips through MessagePack ext codes; loss occurs at Pydantic validation layer, not checkpoint layer |
 
-#### 5. Relationship to grouping <!-- TODO: link to grouping issue #NNNN once filed -->
+#### 5. Relationship to grouping
 
 Causal linking and grouping are complementary layers of the same contract:
 
@@ -181,5 +180,5 @@ This proposal follows established patterns in OTel semconv for recommending prop
 Prototype repo: https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype
 
 - **Simulated tests:** 20 automated tests mapping the compatibility matrix — serialization resilience, failure modes, mitigations, and framework-specific envelope patterns ([`cross-library-demo/test_payload_traceparent.py`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/blob/main/cross-library-demo/test_payload_traceparent.py))
-- **Integration tests:** Real framework imports verifying actual envelope shapes and context propagation across 6 frameworks-  AutoGen, Haystack, PydanticAI, LlamaIndex, CrewAI, Google ADK ([`frameworks/`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/tree/main/frameworks))
+- **Integration tests:** Real framework imports verifying actual envelope shapes and context propagation across 6 frameworks- AutoGen, Haystack, PydanticAI, LlamaIndex, CrewAI, Google ADK ([`frameworks/`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/tree/main/frameworks))
 - **Runnable demo:** Same-process causality demonstration via LangGraph ([`frameworks/langgraph/`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/tree/main/frameworks/langgraph))
