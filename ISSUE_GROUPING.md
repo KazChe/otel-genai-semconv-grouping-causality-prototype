@@ -78,9 +78,17 @@ invoke_agent react_agent
 
 Baggage set once in the active context is copied to every span by `BaggageSpanProcessor`. Round-3's skill keys are absent because that dimension no longer applies.
 
+**Considered but not adopted: `gen_ai.group.delegated_from`**
+
+We considered adding `gen_ai.group.delegated_from` to record the parent agent's identity at sub-agent boundaries. We decided against it. Span parent-child relationships already encode "who delegated to whom" via standard OTel context propagation, making a flat attribute redundant for the in-trace case. The naming also fits awkwardly: an agent-relationship attribute under the `group` namespace conflates two concepts, and a more conventionally named `gen_ai.agent.parent.id` would only highlight that span parent-child already provides this.
+
+At sub-agent boundaries, instrumentors should overwrite `gen_ai.agent.id` in baggage to the sub-agent's identity and let `gen_ai.group.id` inherit (the round/iteration is shared between orchestrator and sub-agent). The parent-child agent relationship is recorded by the ordinary OTel span parent link. See [`frameworks/otel-only/test_grouping_mechanism.py::test_nested_agent_delegation`](https://github.com/KazChe/otel-genai-semconv-grouping-causality-prototype/blob/main/frameworks/otel-only/test_grouping_mechanism.py) for a working demonstration.
+
 #### 2. Recommended transport: W3C Baggage + BaggageSpanProcessor
 
 Grouping attributes are carried in [W3C Baggage](https://www.w3.org/TR/baggage/) and the official [`opentelemetry-processor-baggage`](https://pypi.org/project/opentelemetry-processor-baggage/) package copies them to span attributes automatically. This reduces instrumentation burden: span creators do not need to call `span.set_attribute()` for grouping attributes manually on every span if a `BaggageSpanProcessor` or equivalent copier is configured.
+
+A useful corollary: because `BaggageSpanProcessor` copies baggage entries onto every span as native attributes before export, **backends that do not parse W3C Baggage natively still see the grouping IDs as ordinary span attributes**. The convention does not require backend-side baggage support; baggage-as-transport and span-attribute-as-presentation are reconciled by the processor.
 
 Namespaced keys are what make this viable. W3C Baggage is a flat key-value store, so each grouping dimension maps directly to one baggage entry. Overlapping membership is free — adding a new dimension is just another `set_baggage()` call, with no schema changes or new span types.
 

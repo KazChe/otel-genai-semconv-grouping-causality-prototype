@@ -151,8 +151,19 @@ class TestOverlappingGroupMembership:
         assert chat_attrs["gen_ai.group.id"] == "round-1"
 
     def test_nested_agent_delegation(self, tracing):
-        """An inner agent's spans carry both the outer agent's iteration
-        group and the inner agent's own identity."""
+        """When an orchestrator delegates to a sub-agent, the inner agent's
+        spans demonstrate the delegation pattern this proposal recommends:
+
+        Delegation lineage is captured by span parent-child relationships,
+        not a separate attribute. Sub-agent identity (`gen_ai.agent.id`)
+        overrides via baggage; `gen_ai.group.id` is inherited.
+
+        That is: the round/iteration is shared between orchestrator and
+        sub-agent (via baggage propagation), the sub-agent's identity
+        replaces the orchestrator's at the sub-agent boundary (via baggage
+        overwrite), and the parent->child agent relationship is the
+        ordinary OTel parent-child span link, not a flat attribute.
+        """
         tracer, exporter = tracing
 
         ctx = baggage.set_baggage("gen_ai.group.id", "round-3")
@@ -164,11 +175,9 @@ class TestOverlappingGroupMembership:
             with tracer.start_as_current_span("chat") as outer_span:
                 outer_span.set_attribute("gen_ai.operation.name", "chat")
 
+                # Sub-agent boundary: override agent.id, inherit group.id.
                 inner_ctx = baggage.set_baggage(
-                    "gen_ai.group.delegated_from", "orchestrator"
-                )
-                inner_ctx = baggage.set_baggage(
-                    "gen_ai.agent.id", "research-sub-agent", inner_ctx
+                    "gen_ai.agent.id", "research-sub-agent"
                 )
                 inner_ctx = baggage.set_baggage(
                     "gen_ai.group.id", "round-3", inner_ctx
@@ -190,7 +199,6 @@ class TestOverlappingGroupMembership:
 
         inner_attrs = dict(spans[0].attributes)
         assert inner_attrs["gen_ai.agent.id"] == "research-sub-agent"
-        assert inner_attrs["gen_ai.group.delegated_from"] == "orchestrator"
         assert inner_attrs["gen_ai.group.id"] == "round-3"
         assert inner_attrs["gen_ai.group.iteration.type"] == "react"
 
