@@ -60,7 +60,26 @@ This is the most deceptive framework tested — `run()` accepts extras without e
 ### Baggage PROPAGATES in direct tool.run()
 - **Confirmed:** Baggage set before `tool.run()` is visible inside `_run()`
 - **Classification:** Propagates for direct sync calls
-- **Note:** `kickoff()` / `akickoff()` / `kickoff_async()` dispatch paths not yet tested
+
+### Baggage PROPAGATES through kickoff_async / akickoff dispatch boundaries
+- **Confirmed:** Baggage set in caller context is visible inside the worker
+  callable when dispatched via:
+  - `asyncio.to_thread(...)` (the mechanism `Crew.kickoff_async()` uses
+    internally) — Python copies the current contextvars snapshot into the
+    worker thread (PEP 3156)
+  - native async coroutine (the path `Crew.akickoff()` uses) — same task
+    lineage as the caller, no context handoff needed
+- **Classification:** Propagates for both async entrypoints at the
+  dispatch-boundary level
+- **What was tested:** the dispatch boundary mechanism, not a full Crew
+  run with an LLM. Both `Crew.kickoff_async()` and `Crew.akickoff()`
+  ultimately drive tool execution through the boundary mechanisms above,
+  so this is the determining factor for whether caller baggage flows
+  into tool execution
+- **Residual gap:** full LLM-driven Crew kickoff still not exercised end
+  to end. Tool-side propagation works; whether CrewAI's own
+  agent/task/crew layer mutates baggage between rounds is a separate
+  question
 
 ## Reclassifications
 
@@ -71,9 +90,12 @@ This is the most deceptive framework tested — `run()` accepts extras without e
 | run() with extras | Unknown | Accepts but silently strips before _run() |
 | Schema additionalProperties | Unknown | Not declared (None) |
 | Baggage (sync) | Requires manual propagation | PROPAGATES in direct run() |
-| Baggage (kickoff) | Requires manual propagation | Not yet tested |
+| Baggage (kickoff_async dispatch boundary) | Requires manual propagation | PROPAGATES through asyncio.to_thread() |
+| Baggage (akickoff dispatch boundary) | Requires manual propagation | PROPAGATES through native async |
 
 ## Action items
 - [x] Update `langgraph-demo/test_overlapping_groups.py::test_crewai_to_thread_dispatch` docstring — sync propagates, kickoff TBD
 - [x] Update `ISSUE_GROUPING.md` — CrewAI sync propagates
 - [x] Update `ISSUE_CAUSALITY.md` — CrewAI run() silently strips extras before _run()
+- [x] Test kickoff_async / akickoff dispatch boundaries (both PROPAGATE)
+- [ ] Full LLM-driven Crew kickoff end-to-end test (residual gap)

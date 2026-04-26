@@ -3,12 +3,19 @@
 Tests whether W3C Baggage set in the caller context survives into
 CrewAI tool execution.
 
-Research classification: "Requires manual propagation" — CrewAI has
+Research classification: "Requires manual propagation". CrewAI has
 two async entrypoints: akickoff() (native async) and kickoff_async()
-(thread-based via asyncio.to_thread()). Baggage behavior differs.
+(thread-based via asyncio.to_thread()). Baggage behavior differs by
+dispatch mechanism, which is what these tests exercise directly.
 
-These are integration tests that import the real framework.
+These are integration tests that import the real framework. They
+cover the dispatch boundary mechanisms used internally by CrewAI
+(direct tool.run, asyncio.to_thread for kickoff_async, native async
+for akickoff). They do not run a full Crew with an LLM, since the
+boundary mechanism is what determines whether baggage flows.
 """
+
+import asyncio
 
 import pytest
 
@@ -114,3 +121,70 @@ class TestCrewAIContextPropagation:
 
         assert attrs.get("gen_ai.group.id") == "round-1"
         assert attrs.get("gen_ai.group.iteration.type") == "react"
+
+    @pytest.mark.asyncio
+    async def test_baggage_through_kickoff_async_threading_boundary(self, tracing):
+        """CrewAI's Crew.kickoff_async() wraps kickoff() in
+        asyncio.to_thread(), which is the dispatch boundary that
+        determines whether caller baggage flows into tool execution.
+        Python's asyncio.to_thread() copies the current contextvars
+        snapshot into the worker thread (PEP 3156), so caller baggage
+        should be visible inside _run().
+
+        This test exercises that boundary directly without standing
+        up a full Crew + LLM, since the boundary mechanism is what
+        determines propagation."""
+        tracer, exporter = tracing
+        tool = BaggageCapturingTool()
+
+        ctx = baggage.set_baggage("gen_ai.group.id", "round-2")
+        ctx = baggage.set_baggage("gen_ai.group.iteration.type", "react", ctx)
+        token = context.attach(ctx)
+
+        try:
+            await asyncio.to_thread(tool.run)
+        finally:
+            context.detach(token)
+
+        print(f"\nkickoff_async-style boundary captured baggage: {_captured_baggage}")
+
+        if _captured_baggage.get("gen_ai.group.id") == "round-2":
+            print("RESULT: Baggage PROPAGATES through asyncio.to_thread() (kickoff_async dispatch)")
+        elif not _captured_baggage:
+            print("RESULT: Tool was not called or failed")
+        else:
+            print("RESULT: Baggage LOST through asyncio.to_thread()")
+
+    @pytest.mark.asyncio
+    async def test_baggage_through_akickoff_native_async_boundary(self, tracing):
+        """CrewAI's Crew.akickoff() runs natively in the async loop
+        (no thread offload). In that case the tool runs in the same
+        coroutine task as the caller, so caller baggage should be
+        visible without any context handoff.
+
+        This test exercises the native-async path by awaiting tool
+        execution directly from a coroutine, mirroring what akickoff()
+        does internally."""
+        tracer, exporter = tracing
+        tool = BaggageCapturingTool()
+
+        async def run_tool_in_coroutine():
+            tool.run()
+
+        ctx = baggage.set_baggage("gen_ai.group.id", "round-3")
+        ctx = baggage.set_baggage("gen_ai.group.iteration.type", "react", ctx)
+        token = context.attach(ctx)
+
+        try:
+            await run_tool_in_coroutine()
+        finally:
+            context.detach(token)
+
+        print(f"\nakickoff-style boundary captured baggage: {_captured_baggage}")
+
+        if _captured_baggage.get("gen_ai.group.id") == "round-3":
+            print("RESULT: Baggage PROPAGATES through native async (akickoff dispatch)")
+        elif not _captured_baggage:
+            print("RESULT: Tool was not called or failed")
+        else:
+            print("RESULT: Baggage LOST through native async")

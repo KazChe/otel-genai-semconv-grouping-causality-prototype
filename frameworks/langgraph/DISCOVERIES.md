@@ -81,14 +81,17 @@ frameworks.
 | Propagation path | Baggage status | Notes |
 |------------------|---------------|-------|
 | `graph.invoke()` into nodes | Propagates | Caller context inherited |
+| `graph.ainvoke()` into nodes | Propagates | Async dispatch behaves identically to sync |
 | Sequential node transitions | Propagates | Context not reset between nodes |
 | Conditional edge routing | Propagates | Router and target both see baggage |
 | Manual spans within nodes | Propagates | BaggageSpanProcessor copies to attributes |
 
-**Overall classification: Propagates (sync)**
+**Overall classification: Propagates (sync and async)**
 
-LangGraph's sync dispatch preserves context across all tested paths.
-Async dispatch (`graph.ainvoke()`) is not yet tested.
+LangGraph preserves OTel context across all tested paths, including
+async dispatch via `graph.ainvoke()` (verified by
+`test_baggage_propagates_through_ainvoke` in
+`test_context_propagation.py`).
 
 ## Reclassifications
 
@@ -102,6 +105,6 @@ confirmed.
 ## Action items
 
 - [x] Document `RunnableConfig` type requirement in test docstring
-- [ ] Test async dispatch (`graph.ainvoke()`) for baggage propagation
+- [x] Test async dispatch (`graph.ainvoke()`) for baggage propagation (PROPAGATES, same as sync)
 - [ ] Test `SqliteSaver` checkpoint round-trip directly (currently covered
   indirectly by MessagePack tests in cross-library-demo)

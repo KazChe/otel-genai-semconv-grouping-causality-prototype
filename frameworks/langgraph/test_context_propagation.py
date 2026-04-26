@@ -267,3 +267,56 @@ class TestLangGraphContextPropagation:
             assert attrs.get("gen_ai.group.iteration.type") == "react"
             assert attrs.get("gen_ai.group.skill.id") == "rag-retrieval"
             assert attrs.get("gen_ai.agent.id") == "main-agent"
+
+    @pytest.mark.asyncio
+    async def test_baggage_propagates_through_ainvoke(self, tracing):
+        """Async dispatch path: baggage set before app.ainvoke() must
+        reach node functions and propagate to manually-created spans
+        within them. Mirrors test_baggage_propagates_through_graph_nodes
+        but exercises LangGraph's native async entrypoint.
+
+        Closes the action item in DISCOVERIES.md ("Test async dispatch
+        (graph.ainvoke()) for baggage propagation")."""
+        tracer, exporter = tracing
+
+        class SimpleState(TypedDict):
+            value: str
+
+        async def check_node(state: SimpleState) -> SimpleState:
+            _captured_baggage["gen_ai.group.id"] = baggage.get_baggage(
+                "gen_ai.group.id"
+            )
+            _captured_baggage["gen_ai.group.iteration.type"] = baggage.get_baggage(
+                "gen_ai.group.iteration.type"
+            )
+            with tracer.start_as_current_span("chat") as span:
+                span.set_attribute("gen_ai.operation.name", "chat")
+            return {"value": "done"}
+
+        graph = StateGraph(SimpleState)
+        graph.add_node("check", check_node)
+        graph.add_edge(START, "check")
+        graph.add_edge("check", END)
+        app = graph.compile()
+
+        ctx = baggage.set_baggage("gen_ai.group.id", "round-1")
+        ctx = baggage.set_baggage("gen_ai.group.iteration.type", "react", ctx)
+        token = context.attach(ctx)
+
+        try:
+            await app.ainvoke({"value": "input"})
+        finally:
+            context.detach(token)
+
+        assert _captured_baggage.get("gen_ai.group.id") == "round-1", (
+            "Baggage should propagate into LangGraph node functions via ainvoke"
+        )
+        assert _captured_baggage.get("gen_ai.group.iteration.type") == "react"
+
+        # Verify span attributes via BaggageSpanProcessor
+        spans = exporter.get_finished_spans()
+        chat_spans = [s for s in spans if s.name == "chat"]
+        assert len(chat_spans) == 1
+        attrs = dict(chat_spans[0].attributes)
+        assert attrs.get("gen_ai.group.id") == "round-1"
+        assert attrs.get("gen_ai.group.iteration.type") == "react"
